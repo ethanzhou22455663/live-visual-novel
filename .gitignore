@@ -1,0 +1,36 @@
+# ============================================================
+# 合规红线（最高优先级，永远不要移除）
+# assets/ 与 mock/assets/ 内是借用/派生的版权素材，仅限本机测试。
+# 严禁入库、严禁随仓库公开。详见 docs 与根 README。
+# ============================================================
+/assets/
+mock/assets/*
+!mock/assets/README.md
+
+# ---- 密钥（API key 永远不入库） ----
+.env
+.env.*
+!.env.example
+*.key
+
+# ---- Node / 构建 ----
+node_modules/
+dist/
+coverage/
+.vite/
+.turbo/
+*.tsbuildinfo
+*.log
+npm-debug.log*
+
+# ---- Tauri（P2 打包时生效） ----
+src-tauri/target/
+src-tauri/gen/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+.claude/settings.local.json
+.DS_Store
+Thumbs.db
+Desktop.ini

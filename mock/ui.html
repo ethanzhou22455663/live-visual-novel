@@ -1,0 +1,570 @@
+<title>AI Galgame — UIシェル モック</title>
+<meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Noto+Serif+JP:wght@600;700;900&display=swap">
+<style>
+  /* ============================================================
+     设计语言：墨色舞台 + 朱色一点 + 角色个人色
+     台词窗 = 全幅半透明渐变（无框）；按钮 = 去盒子化的文字与发丝线
+     ============================================================ */
+  :root {
+    --ink: #060709;
+    --acc: #c8503a;                 /* 朱 */
+    --tx: #f3f1ec;
+    --tx-dim: rgba(243, 241, 236, .6);
+    --hairline: rgba(255, 255, 255, .22);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background: var(--ink); color: var(--tx);
+    font-family: 'Noto Sans JP', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', 'Microsoft YaHei', sans-serif;
+    user-select: none;
+  }
+
+  /* ===== 舞台 1920×1080 等比缩放 ===== */
+  #stage {
+    position: absolute; left: 50%; top: 50%;
+    width: 1920px; height: 1080px;
+    transform-origin: center center;
+    background: #000; overflow: hidden;
+  }
+
+  /* ===== 场景层 ===== */
+  .scene { position: absolute; inset: 0; background: #000; }
+  .layer { position: absolute; inset: 0; display: none; }
+  .layer.on { display: block; }
+  .layer img { width: 1920px; height: 1080px; display: block; }
+  .bg { transition: opacity .9s ease; }
+  .bg img { object-fit: cover; }
+  .spr {
+    transition: opacity .55s ease, transform .65s cubic-bezier(.2,.7,.2,1), filter .35s ease;
+    transform: var(--shift, translateX(0));
+  }
+  .spr.enter { opacity: 0; transform: translateY(36px) var(--shift, translateX(0)); }
+  .spr[data-pos="left"]   { --shift: translateX(-16%); }
+  .spr[data-pos="center"] { --shift: translateX(0); }
+  .spr[data-pos="right"]  { --shift: translateX(16%); }
+  .spr.dim { filter: brightness(.6) saturate(.85); }
+
+  /* ===== UI 层 ===== */
+  .ui { position: absolute; inset: 0; }
+
+  /* 徽标（角落、极轻） */
+  .mocktag {
+    position: absolute; top: 22px; left: 28px; z-index: 40;
+    font-size: 15px; letter-spacing: .24em; color: rgba(243,241,236,.4);
+  }
+
+  /* 快捷菜单：右下角，纯文字 + 悬停发丝线 */
+  .quick { position: absolute; right: 52px; bottom: 22px; display: none; gap: 30px; z-index: 30; }
+  .quick.on { display: flex; }
+  .qbtn {
+    background: none; border: none; cursor: pointer;
+    font-family: inherit; font-size: 19px; letter-spacing: .22em;
+    color: var(--tx-dim); padding: 4px 1px; position: relative;
+    text-shadow: 0 1px 8px rgba(0,0,0,.9); transition: color .2s;
+  }
+  .qbtn::after {
+    content: ""; position: absolute; left: 1px; right: 1px; bottom: -1px; height: 1px;
+    background: var(--acc); transform: scaleX(0); transform-origin: left;
+    transition: transform .22s ease;
+  }
+  .qbtn:hover { color: #fff; }
+  .qbtn:hover::after { transform: scaleX(1); }
+
+  /* ===== 台词窗：全幅渐变纱，无框 ===== */
+  .win {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 356px;
+    display: none; padding: 100px 132px 60px;
+    background: linear-gradient(180deg,
+      rgba(6,7,9,0) 0%, rgba(6,7,9,.38) 30%, rgba(6,7,9,.76) 62%, rgba(6,7,9,.92) 100%);
+  }
+  .win.on { display: block; }
+  .nameplate {
+    position: absolute; top: 42px; left: 134px; height: 40px;
+    display: none; align-items: center; gap: 15px;
+  }
+  .nameplate.on { display: flex; }
+  .nameplate .d {
+    width: 11px; height: 11px; transform: rotate(45deg);
+    background: var(--pc, var(--acc)); box-shadow: 0 0 12px var(--pc, var(--acc));
+  }
+  .nameplate .nm {
+    font-family: 'Noto Serif JP', serif; font-weight: 700;
+    font-size: 33px; letter-spacing: .16em; line-height: 1;
+    text-shadow: 0 2px 12px rgba(0,0,0,.95);
+  }
+  .nameplate .ln {
+    width: 190px; height: 1px;
+    background: linear-gradient(90deg, var(--pc, var(--acc)), transparent);
+    opacity: .8;
+  }
+  .text {
+    font-size: 31px; font-weight: 400; line-height: 1.85; letter-spacing: .05em;
+    color: var(--tx); text-shadow: 0 1px 4px rgba(0,0,0,.9), 0 0 22px rgba(0,0,0,.5);
+    max-height: 3.8em; overflow: hidden;
+  }
+  .next {
+    position: absolute; right: 56px; bottom: 66px; font-size: 20px;
+    color: var(--acc); text-shadow: 0 0 10px rgba(200,80,58,.8);
+    opacity: 0; animation: nb 1.1s infinite;
+  }
+  .next.on { opacity: 1; }
+  @keyframes nb { 0%,100% { transform: translateY(0); } 50% { transform: translateY(5px); } }
+
+  /* ===== 标题画面 ===== */
+  .title { position: absolute; inset: 0; display: none; }
+  .title.on { display: block; }
+  .title .shade {
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(90deg, rgba(4,5,7,.78) 0%, rgba(4,5,7,.3) 46%, rgba(4,5,7,.18) 70%, rgba(4,5,7,.42) 100%),
+      linear-gradient(0deg, rgba(4,5,7,.66) 0%, rgba(4,5,7,0) 34%);
+  }
+  .logo { position: absolute; top: 128px; left: 128px; }
+  .logo .kicker {
+    font-size: 21px; letter-spacing: .52em; color: var(--tx-dim); margin-bottom: 26px;
+    text-shadow: 0 1px 8px rgba(0,0,0,.9);
+  }
+  .logo h1 {
+    font-family: 'Noto Serif JP', serif; font-weight: 900;
+    font-size: 118px; line-height: 1.08; letter-spacing: .03em;
+    text-shadow: 0 4px 30px rgba(0,0,0,.9);
+  }
+  .logo h1 .z { color: var(--acc); text-shadow: 0 0 26px rgba(200,80,58,.45), 0 4px 30px rgba(0,0,0,.9); }
+  .logo .sub {
+    margin-top: 24px; display: flex; align-items: center; gap: 18px;
+    font-size: 20px; letter-spacing: .34em; color: var(--tx-dim);
+  }
+  .logo .sub::before { content: ""; width: 54px; height: 1px; background: var(--acc); }
+  .menu { position: absolute; right: 148px; bottom: 128px; display: flex; flex-direction: column; gap: 26px; align-items: flex-end; }
+  .mitem {
+    position: relative; font-size: 33px; letter-spacing: .26em; cursor: pointer;
+    color: rgba(243,241,236,.82); padding: 4px 34px 3px 56px;
+    text-shadow: 0 2px 10px rgba(0,0,0,.95);
+    transition: color .2s, letter-spacing .3s ease;
+  }
+  .mitem::before {
+    content: "◆"; position: absolute; left: 8px; top: 50%; translate: 0 -50%;
+    font-size: 16px; color: var(--acc); opacity: 0;
+    transition: opacity .2s, left .25s ease;
+  }
+  .mitem:hover { color: #fff; letter-spacing: .32em; }
+  .mitem:hover::before { opacity: 1; left: 16px; }
+  .tfoot {
+    position: absolute; left: 0; right: 0; bottom: 14px; text-align: center;
+    font-size: 16px; letter-spacing: .2em; color: rgba(243,241,236,.35);
+  }
+
+  /* ===== 选项 ===== */
+  .choices { position: absolute; inset: 0; display: none; place-items: center; background: radial-gradient(90% 90% at 50% 50%, rgba(4,5,7,.28), rgba(4,5,7,.6)); }
+  .choices.on { display: grid; }
+  .choices .col { display: flex; flex-direction: column; gap: 24px; width: 700px; }
+  .choice {
+    position: relative;
+    background: linear-gradient(180deg, rgba(13,15,20,.62), rgba(13,15,20,.85));
+    border: 1px solid var(--hairline); border-radius: 3px;
+    color: var(--tx); font-size: 27px; letter-spacing: .14em; text-align: center;
+    padding: 21px 20px 19px; cursor: pointer; backdrop-filter: blur(9px);
+    box-shadow: 0 8px 30px rgba(0,0,0,.4);
+    transition: border-color .18s, background .18s, transform .18s, box-shadow .18s;
+  }
+  .choice::before {
+    content: "◆"; position: absolute; left: 28px; top: 50%; translate: 0 -50%;
+    font-size: 15px; color: var(--acc); opacity: 0; transition: opacity .18s;
+  }
+  .choice:hover {
+    border-color: rgba(200,80,58,.85); transform: translateY(-2px);
+    background: linear-gradient(180deg, rgba(26,17,15,.7), rgba(22,14,12,.9));
+    box-shadow: 0 10px 36px rgba(0,0,0,.5), 0 0 18px rgba(200,80,58,.18);
+  }
+  .choice:hover::before { opacity: 1; }
+
+  /* ===== 面板 ===== */
+  .panel { position: absolute; inset: 0; display: none; background: rgba(3,4,6,.72); backdrop-filter: blur(3px); }
+  .panel.on { display: block; }
+  .pbox {
+    position: absolute; left: 250px; right: 250px; top: 84px; bottom: 84px;
+    background: linear-gradient(180deg, rgba(17,19,25,.97), rgba(11,12,16,.97));
+    border: 1px solid rgba(255,255,255,.13); border-top: 1px solid rgba(255,255,255,.22);
+    border-radius: 5px; display: flex; flex-direction: column;
+    box-shadow: 0 30px 80px rgba(0,0,0,.6);
+  }
+  .phead {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 24px 36px; position: relative;
+  }
+  .phead::after {
+    content: ""; position: absolute; left: 36px; right: 36px; bottom: 0; height: 1px;
+    background: linear-gradient(90deg, var(--acc) 0%, var(--acc) 64px, rgba(255,255,255,.14) 64px, transparent 100%);
+  }
+  .phead h2 {
+    font-family: 'Noto Serif JP', serif; font-size: 29px; font-weight: 700; letter-spacing: .22em;
+  }
+  .phead h2::before { content: "◆"; color: var(--acc); margin-right: 16px; font-size: 18px; }
+  .pclose {
+    font-size: 24px; color: var(--tx-dim); cursor: pointer; padding: 4px 14px;
+    border: 1px solid transparent; border-radius: 3px; transition: color .2s, border-color .2s;
+  }
+  .pclose:hover { color: #fff; border-color: rgba(200,80,58,.7); }
+  .pbody { flex: 1; overflow-y: auto; padding: 30px 40px; }
+
+  /* ログ */
+  .logrow { display: flex; gap: 28px; padding: 16px 6px; border-bottom: 1px solid rgba(255,255,255,.06); font-size: 23px; line-height: 1.8; }
+  .logrow .n { flex: 0 0 170px; font-weight: 700; letter-spacing: .08em; }
+  .logrow .t { color: var(--tx); min-width: 0; }
+  .logrow.nar .t { color: var(--tx-dim); }
+
+  /* セーブ */
+  .slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .slot {
+    border: 1px solid rgba(255,255,255,.13); border-radius: 4px; overflow: hidden;
+    background: #0b0d11; cursor: pointer; transition: border-color .18s, transform .18s, box-shadow .18s;
+  }
+  .slot:hover { border-color: rgba(200,80,58,.85); transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,.5); }
+  .slot .th { height: 196px; background-size: cover; background-position: center; position: relative; }
+  .slot .th::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(5,6,8,.25), rgba(5,6,8,.78)); }
+  .slot .th .tag {
+    position: absolute; left: 0; top: 0; z-index: 1; background: var(--acc); color: #fff;
+    font-size: 18px; padding: 5px 16px 4px; letter-spacing: .16em;
+  }
+  .slot .th .tag.off { background: rgba(60,64,72,.9); }
+  .slot .meta { padding: 15px 20px 17px; font-size: 18px; color: var(--tx-dim); line-height: 1.7; }
+  .slot .meta b { display: block; color: var(--tx); font-size: 21px; letter-spacing: .06em; margin-bottom: 3px; font-weight: 500; }
+
+  /* コンフィグ */
+  .cfgrow { display: flex; align-items: center; gap: 36px; padding: 27px 10px; border-bottom: 1px solid rgba(255,255,255,.06); }
+  .cfgrow label { flex: 0 0 250px; font-size: 24px; letter-spacing: .14em; }
+  .cfgrow input[type="range"] { flex: 1; accent-color: var(--acc); height: 30px; cursor: pointer; }
+  .cfgrow .val { flex: 0 0 110px; text-align: right; font-size: 22px; color: var(--tx-dim); font-variant-numeric: tabular-nums; }
+  .cfgrow.off { opacity: .35; pointer-events: none; }
+  .cfgnote { margin-top: 26px; font-size: 18px; color: var(--tx-dim); letter-spacing: .06em; }
+
+  /* toast */
+  .toast {
+    position: absolute; left: 50%; bottom: 396px; transform: translateX(-50%);
+    background: rgba(10,11,15,.9); border: 1px solid rgba(255,255,255,.16);
+    border-left: 3px solid var(--acc); border-radius: 3px;
+    color: var(--tx); font-size: 22px; letter-spacing: .12em; padding: 15px 36px;
+    opacity: 0; pointer-events: none; transition: opacity .3s;
+    backdrop-filter: blur(6px);
+  }
+  .toast.on { opacity: 1; }
+
+  ::-webkit-scrollbar { width: 10px; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.16); border-radius: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+
+<div id="stage">
+  <div class="scene" id="scene">
+    <div class="layer bg" id="bgA"><img alt=""></div>
+    <div class="layer bg" id="bgB"><img alt=""></div>
+  </div>
+
+  <div class="ui">
+    <div class="mocktag">界面演示壳 · 仅限本地测试 · 请勿公开</div>
+
+    <div class="quick" id="quick">
+      <button class="qbtn" data-p="log">日志</button>
+      <button class="qbtn" data-p="save">保存</button>
+      <button class="qbtn" data-p="load">读取</button>
+      <button class="qbtn" data-p="cfg">设置</button>
+      <button class="qbtn" id="btnTitle">标题</button>
+    </div>
+
+    <div class="win" id="win">
+      <div class="nameplate" id="plate"><div class="d"></div><div class="nm"></div><div class="ln"></div></div>
+      <div class="text" id="text"></div>
+      <div class="next" id="next">▼</div>
+    </div>
+
+    <div class="title on" id="title">
+      <div class="shade"></div>
+      <div class="logo">
+        <div class="kicker">AI 实时生成的视觉小说</div>
+        <h1>AI <span class="z">Gal</span>game</h1>
+        <div class="sub">界面原型 · 本地演示</div>
+      </div>
+      <div class="menu">
+        <div class="mitem" id="mStart">开始游戏</div>
+        <div class="mitem" id="mCont">继续游戏</div>
+        <div class="mitem" data-open="cfg">设置</div>
+        <div class="mitem" id="mQuit">退出</div>
+      </div>
+      <div class="tfoot">※ 本页素材仅限本地测试使用（原素材有版权，不公开、不入库）</div>
+    </div>
+
+    <div class="choices" id="choices"><div class="col" id="choiceCol"></div></div>
+
+    <div class="panel" id="p-log">
+      <div class="pbox">
+        <div class="phead"><h2>日志</h2><div class="pclose" data-close>✕</div></div>
+        <div class="pbody" id="logBody"></div>
+      </div>
+    </div>
+    <div class="panel" id="p-save">
+      <div class="pbox">
+        <div class="phead"><h2 id="saveTitle">保存</h2><div class="pclose" data-close>✕</div></div>
+        <div class="pbody"><div class="slots" id="slots"></div></div>
+      </div>
+    </div>
+    <div class="panel" id="p-cfg">
+      <div class="pbox">
+        <div class="phead"><h2>设置</h2><div class="pclose" data-close>✕</div></div>
+        <div class="pbody">
+          <div class="cfgrow"><label>文字速度</label><input type="range" id="rSpeed" min="1" max="5" value="3" step="1"><div class="val" id="vSpeed">普通</div></div>
+          <div class="cfgrow"><label>BGM 音量</label><input type="range" id="rBgm" min="0" max="100" value="40"><div class="val" id="vBgm">40</div></div>
+          <div class="cfgrow off"><label>音效音量</label><input type="range" value="60"><div class="val">60</div></div>
+          <div class="cfgrow off"><label>语音音量</label><input type="range" value="80"><div class="val">80</div></div>
+          <div class="cfgnote">※ 演示模式：音效 / 语音为占位显示，不会发声</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ===== 素材：抠图产物（mock/assets，本地测试专用） ===== */
+const A = (p) => encodeURI("assets/" + p);
+const BGS = {
+  "教室": A("场景/教室.jpg"), "走廊": A("场景/走廊.jpg"), "学校": A("场景/学校.jpg"),
+  "大街": A("场景/大街.jpg"), "商场": A("场景/商场.jpg"), "球场": A("场景/球场.jpg"),
+  "居民区": A("场景/居民区.jpg"), "男生房间": A("场景/男生房间.jpg"), "女生房间": A("场景/女生房间.jpg"),
+};
+const NAME  = { 1: "少女Ａ", 2: "少女Ｂ" };
+const COLOR = { 1: "#f2a7c3", 2: "#e8826f" };   // 角色个人色
+const SPR = (n, e) => A(`${n}/${e}.png`);
+const BGM = encodeURI("../assets/bgm/《甜蜜女友3》全音乐鉴赏 p07 そぞろ歩いて温泉街 [BV13txQzjEb4_p7].m4a");
+
+/* ===== mock 脚本（占位文本） ===== */
+const SCRIPT = [
+  { bg: "教室" },
+  { nar: "――放課後の教室。夕方の光が、机の上に長い影を落としている。" },
+  { who: 1, e: "平常", pos: "center", say: "あ、先輩……。まだ帰ってなかったんですか。" },
+  { who: 1, e: "微笑", say: "ふふ、真面目ですね。でも、休むのも仕事ですよ？" },
+  { who: 1, e: "害羞", say: "その……昨日の、件なんですけど。" },
+  { bg: "走廊" },
+  { who: 2, e: "平常", pos: "right", say: "おーい！　まだこんなとこにいたの？" },
+  { who: 1, pos: "left" },
+  { who: 2, e: "笑", say: "駅前の新ショップ、開店三十分で行列が消えるらしいよ。" },
+  { who: 1, e: "震惊", say: "えっ、あの話題の限定店！？" },
+  { who: 2, e: "微笑", say: "急ごうか。――その前に、一つだけ聞いてもいい？" },
+  { choices: ["素直についていく", "興味がないふりをする", "話題を変える"] },
+];
+
+/* ===== 舞台缩放 ===== */
+const stage = document.getElementById("stage");
+function fit() {
+  const s = Math.min(innerWidth / 1920, innerHeight / 1080);
+  stage.style.transform = `translate(-50%,-50%) scale(${s})`;
+}
+addEventListener("resize", fit); fit();
+
+/* ===== 场景层 ===== */
+const scene = document.getElementById("scene");
+let bgFlip = false, curBgKey = "学校";
+function setBg(key) {
+  curBgKey = key;
+  const inc = document.getElementById(bgFlip ? "bgA" : "bgB");
+  const out = document.getElementById(bgFlip ? "bgB" : "bgA");
+  const img = inc.querySelector("img");
+  img.onload = () => { inc.classList.add("on"); inc.style.opacity = 1; out.style.opacity = 0; };
+  img.src = BGS[key];
+  if (img.complete) img.onload();
+  bgFlip = !bgFlip;
+}
+const sprites = {};
+function ensureSpr(n) {
+  if (sprites[n]) return sprites[n];
+  const el = document.createElement("div");
+  el.className = "layer spr enter";
+  el.dataset.pos = "center";
+  el.innerHTML = `<img alt="">`;
+  scene.appendChild(el);
+  return (sprites[n] = { el, expr: null });
+}
+function setExpr(n, e) {
+  const s = ensureSpr(n);
+  if (s.expr === e) return;
+  s.expr = e;
+  s.el.querySelector("img").src = SPR(n, e);
+  s.el.classList.add("on");
+  requestAnimationFrame(() => requestAnimationFrame(() => s.el.classList.remove("enter")));
+}
+function setPos(n, pos) { ensureSpr(n).el.dataset.pos = pos; }
+function speak(n) {
+  for (const k in sprites) sprites[k].el.classList.toggle("dim", String(k) !== String(n));
+}
+
+/* ===== 文字窗 / 打字机 ===== */
+const win = document.getElementById("win"), plate = document.getElementById("plate"),
+      textEl = document.getElementById("text"), nextEl = document.getElementById("next");
+const SPEED_MS = [52, 40, 28, 18, 10];
+const SPEED_LB = ["慢", "较慢", "普通", "较快", "快"];
+let speed = 3, typer = null, fullText = "", typing = false, bgm = null;
+
+function type(text, done) {
+  clearInterval(typer); typing = true; fullText = text; nextEl.classList.remove("on");
+  let i = 0;
+  const tick = () => {
+    textEl.textContent = text.slice(0, ++i);
+    if (i >= text.length) { clearInterval(typer); typing = false; nextEl.classList.add("on"); done && done(); }
+  };
+  typer = setInterval(tick, SPEED_MS[speed - 1]);
+}
+function finishType() { clearInterval(typer); textEl.textContent = fullText; typing = false; nextEl.classList.add("on"); }
+
+/* ===== 主流程 ===== */
+let idx = 0, started = false;
+const logRows = [];
+
+function pushLog(who, text) {
+  logRows.push({ who, text });
+  const row = document.createElement("div");
+  row.className = "logrow" + (who ? "" : " nar");
+  row.innerHTML = who
+    ? `<div class="n" style="color:${COLOR[who]}"></div><div class="t"></div>`
+    : `<div class="n"></div><div class="t"></div>`;
+  if (who) row.querySelector(".n").textContent = NAME[who];
+  row.querySelector(".t").textContent = text;
+  document.getElementById("logBody").appendChild(row);
+}
+
+function step() {
+  if (idx >= SCRIPT.length) return;
+  const s = SCRIPT[idx++];
+  if (s.bg) { setBg(s.bg); nextEl.classList.remove("on"); return; }
+  if (s.choices) { showChoices(s.choices); return; }
+  if (s.who) {
+    if (s.e) setExpr(s.who, s.e);
+    if (s.pos) setPos(s.who, s.pos);
+    speak(s.who);
+    plate.querySelector(".nm").textContent = NAME[s.who];
+    plate.style.setProperty("--pc", COLOR[s.who]);
+    plate.classList.add("on");
+    pushLog(s.who, s.say);
+    type(s.say); return;
+  }
+  if (s.nar) {
+    speak(null);
+    plate.classList.remove("on");
+    pushLog(null, s.nar);
+    type(s.nar); return;
+  }
+}
+function advance() {
+  if (!started) return;
+  if (typing) { finishType(); return; }
+  if (nextEl.classList.contains("on")) { nextEl.classList.remove("on"); step(); }
+}
+
+/* ===== 选项 ===== */
+const choicesEl = document.getElementById("choices"), choiceCol = document.getElementById("choiceCol");
+function showChoices(list) {
+  choiceCol.innerHTML = "";
+  list.forEach(t => {
+    const b = document.createElement("div");
+    b.className = "choice"; b.textContent = t;
+    b.onclick = (ev) => { ev.stopPropagation(); toast("（演示）这里将由 AI 生成下一段剧情"); };
+    choiceCol.appendChild(b);
+  });
+  choicesEl.classList.add("on");
+}
+
+/* ===== 面板 ===== */
+function openPanel(id) {
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("on"));
+  if (id === "save" || id === "load") {
+    buildSlots();
+    document.getElementById("saveTitle").textContent = id === "save" ? "保存" : "读取";
+  }
+  document.getElementById("p-" + id).classList.add("on");
+}
+document.querySelectorAll("[data-close]").forEach(el => el.onclick = (e) => {
+  e.stopPropagation(); el.closest(".panel").classList.remove("on");
+});
+function buildSlots() {
+  const box = document.getElementById("slots"); box.innerHTML = "";
+  const cur = BGS[curBgKey];
+  ["存档一", "存档二", "存档三", "存档四", "快速", "自动"].forEach((nm, i) => {
+    const has = i < 2;
+    const d = document.createElement("div"); d.className = "slot";
+    d.innerHTML = `
+      <div class="th" style="background-image:url('${has ? cur : ""}')">
+        <div class="tag${has ? "" : " off"}">${nm}</div>
+      </div>
+      <div class="meta">${has
+        ? `<b>第壱話「放課後の教室」</b>2026-10-11 16:20<br>PLAY TIME 00:42`
+        : `<b>―― データなし ――</b>`}</div>`;
+    d.onclick = (e) => { e.stopPropagation(); toast(has ? "（演示）读取演出未实现" : "（演示）空存档位"); };
+    box.appendChild(d);
+  });
+}
+
+/* ===== コンフィグ ===== */
+const rSpeed = document.getElementById("rSpeed"), vSpeed = document.getElementById("vSpeed");
+rSpeed.oninput = () => { speed = +rSpeed.value; vSpeed.textContent = SPEED_LB[speed - 1]; };
+const rBgm = document.getElementById("rBgm"), vBgm = document.getElementById("vBgm");
+rBgm.oninput = () => { vBgm.textContent = rBgm.value; if (bgm) bgm.volume = rBgm.value / 100; };
+
+/* ===== toast ===== */
+let toastT = null;
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("on");
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("on"), 1800);
+}
+
+/* ===== 标题 / 开始 ===== */
+const titleEl = document.getElementById("title");
+function clearSprites() {
+  Object.keys(sprites).forEach(k => { sprites[k].el.remove(); delete sprites[k]; });
+}
+function titleVisual() { clearSprites(); setBg("学校"); setExpr(1, "平常"); }
+function start() {
+  titleEl.classList.remove("on");
+  document.getElementById("quick").classList.add("on");
+  win.classList.add("on");
+  started = true; idx = 0;
+  clearSprites();
+  // 预载表情差分与背景，防中途换图闪白
+  for (let n = 1; n <= 2; n++) ["平常", "微笑", "笑", "害羞", "震惊"].forEach(e => { new Image().src = SPR(n, e); });
+  Object.values(BGS).forEach(u => { new Image().src = u; });
+  if (!bgm) { bgm = new Audio(BGM); bgm.loop = true; bgm.volume = rBgm.value / 100; }
+  bgm.play().catch(() => {});
+  step();
+}
+document.getElementById("mStart").onclick = (e) => { e.stopPropagation(); start(); };
+document.getElementById("mCont").onclick = (e) => { e.stopPropagation(); toast("（演示）暂无存档"); };
+document.getElementById("mQuit").onclick = (e) => { e.stopPropagation(); toast("（演示）退出未实现"); };
+document.querySelectorAll("[data-open]").forEach(el => el.onclick = (e) => { e.stopPropagation(); openPanel(el.dataset.open); });
+document.getElementById("btnTitle").onclick = (e) => {
+  e.stopPropagation();
+  started = false; clearInterval(typer);
+  win.classList.remove("on"); document.getElementById("quick").classList.remove("on");
+  choicesEl.classList.remove("on");
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("on"));
+  titleEl.classList.add("on");
+  titleVisual();
+};
+
+/* ===== 输入 ===== */
+stage.addEventListener("click", (e) => {
+  if (e.target.closest(".qbtn, .panel, .choice, .mitem, .pclose")) return;
+  if (document.querySelector(".panel.on")) return;
+  advance();
+});
+addEventListener("keydown", (e) => {
+  if (e.key === " " || e.key === "Enter") {
+    if (document.querySelector(".panel.on")) { document.querySelectorAll(".panel").forEach(p => p.classList.remove("on")); return; }
+    advance(); e.preventDefault();
+  }
+  if (e.key === "Escape") document.querySelectorAll(".panel").forEach(p => p.classList.remove("on"));
+});
+
+titleVisual();  // 初回描画
+</script>

@@ -1,0 +1,518 @@
+<title>AI Galgame 架构与工程规范</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;900&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* 设计计划：和风工程文档。朱=生成侧/强调，黛=呈现侧/允许，灰=禁止与辅助。
+     型：Noto Serif SC 标题 · Noto Sans SC 正文 · IBM Plex Mono 代码与数字。 */
+  :root {
+    --bg: #F4F4F0; --card: #FFFFFF; --fg: #24292B; --line: #D9DBD2;
+    --zhu: #BC4A2E; --dai: #2F5D7C; --mut: #6E7679;
+    --zhu-soft: rgba(188,74,46,.12); --dai-soft: rgba(47,93,124,.10);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --bg: #17191C; --card: #1E2226; --fg: #E7E5DD; --line: #343A40;
+    --zhu: #E07A5F; --dai: #82AECB; --mut: #9AA3A8;
+    --zhu-soft: rgba(224,122,95,.14); --dai-soft: rgba(130,174,203,.12);
+    color-scheme: dark;
+  } }
+  :root[data-theme="dark"] {
+    --bg: #17191C; --card: #1E2226; --fg: #E7E5DD; --line: #343A40;
+    --zhu: #E07A5F; --dai: #82AECB; --mut: #9AA3A8;
+    --zhu-soft: rgba(224,122,95,.14); --dai-soft: rgba(130,174,203,.12);
+    color-scheme: dark;
+  }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+    font-size: 15px; line-height: 1.75;
+    padding: 40px 20px 72px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 {
+    font-family: 'Noto Serif SC', serif; font-weight: 900;
+    font-size: clamp(26px, 5vw, 38px); line-height: 1.3;
+    margin: 0 0 14px; text-wrap: balance;
+  }
+  h1 .zhu { color: var(--zhu); }
+  h2 {
+    font-family: 'Noto Serif SC', serif; font-weight: 600;
+    font-size: 21px; margin: 56px 0 6px; text-wrap: balance;
+  }
+  h2 + p { margin-top: 4px; }
+  .lead { font-size: 16.5px; max-width: 62ch; color: var(--fg); }
+  .lead strong { color: var(--zhu); font-weight: 700; }
+  p { max-width: 68ch; }
+  .mut { color: var(--mut); }
+  .mono { font-family: 'IBM Plex Mono', monospace; font-size: .92em; }
+  section { margin-top: 8px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 14px 0 8px; }
+  th, td { border: 1px solid var(--line); padding: 8px 11px; text-align: left; vertical-align: top; }
+  th { background: var(--card); font-weight: 700; font-size: 12.5px; }
+  td { background: var(--bg); }
+  td.c, th.c { text-align: center; }
+  .tbl-scroll { overflow-x: auto; }
+  .num { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .pill {
+    display: inline-block; font-size: 12px; font-weight: 700; line-height: 1;
+    padding: 5px 10px 4px; border-radius: 999px; white-space: nowrap;
+  }
+  .pill.ok { background: var(--zhu-soft); color: var(--zhu); border: 1px solid var(--zhu); }
+  .pill.no { background: transparent; color: var(--mut); border: 1px solid var(--line); }
+  .yes { color: var(--dai); font-weight: 700; }
+  .no-c { color: var(--mut); }
+
+  figure { margin: 22px 0 10px; }
+  .fig-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 14px 10px; }
+  .fig-scroll svg { display: block; min-width: 660px; max-width: 100%; height: auto; margin: 0 auto; }
+  figcaption { font-size: 13.5px; color: var(--mut); margin-top: 10px; max-width: 70ch; }
+  figcaption b { color: var(--fg); }
+
+  pre.code {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; overflow-x: auto; margin: 14px 0 8px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; line-height: 1.65;
+  }
+  pre.code .cm { color: var(--mut); }
+  pre.code .kw { color: var(--zhu); font-weight: 500; }
+
+  /* SVG 图元 */
+  .nd { fill: var(--card); stroke: var(--line); stroke-width: 1.2; }
+  .nd-acc { stroke: var(--zhu); stroke-width: 2; }
+  .ndt { font-size: 12.5px; font-weight: 700; fill: var(--fg); }
+  .ndi { font-size: 11.5px; fill: var(--fg); }
+  .lbl { font-size: 10.5px; fill: var(--mut); }
+  .lbl-imp { font-size: 10.5px; font-weight: 700; fill: var(--zhu); }
+  .layer { font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 700; fill: var(--dai); }
+  .fl { stroke: var(--fg); stroke-width: 1.3; fill: none; }
+  .fl-dash { stroke-dasharray: 4 3; }
+  .d-arrow { fill: var(--fg); }
+  .rail-line { stroke: var(--mut); stroke-width: 1; stroke-dasharray: 6 4; }
+  .rail-t { font-size: 11px; fill: var(--mut); }
+  .bar-gen { fill: var(--zhu); opacity: .88; }
+  .bar-use { fill: var(--dai); opacity: .85; }
+  .grid-t { stroke: var(--line); stroke-width: 1; }
+  .tick { font-size: 10px; fill: var(--mut); }
+  .ann { font-size: 10.5px; fill: var(--fg); }
+  .ann-line { stroke: var(--zhu); stroke-width: 1; stroke-dasharray: 3 3; }
+  .chip { font-size: 10.5px; fill: var(--fg); }
+
+  ul { padding-left: 1.3em; max-width: 70ch; }
+  ul ul { margin-top: 2px; }
+  li { margin: 5px 0; }
+  li::marker { color: var(--zhu); }
+  footer { margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 13px; color: var(--mut); }
+</style>
+
+<div class="wrap">
+
+<h1>按<span class="zhu">拍</span>流式：架构、依赖规则与工程规范</h1>
+<p class="lead">
+  生成粒度：<strong>既不是一次性生成整篇，也不是每句一次 API 调用</strong>。
+  按「拍」（beat）生成——玩家每做一次选择，AI 用<strong>一次流式调用</strong>写出接下来 10~30 行剧情；
+  「句子」只是这段流内部的上屏和配音单位，不产生额外调用。
+  你的选择改变的是<strong>下一拍往哪写</strong>，已写好的内容永远不重新生成。
+</p>
+
+<section>
+  <h2>三种粒度，为什么只有一种成立</h2>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th style="width:15%">粒度</th><th style="width:34%">怎么工作</th><th style="width:37%">致命问题</th><th style="width:14%">判定</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>全篇一次生成</b></td>
+        <td>一次调用写完整个故事</td>
+        <td>选项无法影响后续——正是你不要的「没有意义」；几万字输出必然崩坏</td>
+        <td><span class="pill no">否决</span></td>
+      </tr>
+      <tr>
+        <td><b>每句一次调用</b></td>
+        <td>每写一句就请求一次 API</td>
+        <td>角色卡、世界书、摘要这些上下文每句都要重新注入一遍（×20 次/拍）；每句都付一次首 token 延迟，节奏稀碎</td>
+        <td><span class="pill no">否决</span></td>
+      </tr>
+      <tr>
+        <td><b>每拍一次流式</b></td>
+        <td>导演发一次小指令，编剧<b>一次流式调用</b>连续输出 10~30 行；行边生成边上屏边配音</td>
+        <td>唯一代价：本拍第一句前有 2~4 秒等待，由打字机逐字显示 + 首句尽快合成填补</td>
+        <td><span class="pill ok">采用</span></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="mut" style="font-size:13.5px">「拍」= 一段连续剧情（十几句台词到一个场景），以弹出选项收尾。互动粒度是拍，显示/配音粒度是句，API 粒度也是拍——三层各司其职。</p>
+</section>
+
+<section>
+  <h2>四层模型：核心业务、适配层、壳、协议</h2>
+  <p>分层采用<b>六边形（端口与适配器）</b>，按业务切成两个核心包（engine / director），不是横向三层。依赖方向永远指向 L0：</p>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th style="width:13%">层</th><th style="width:22%">位置</th><th style="width:41%">内容</th><th style="width:24%">依赖规则</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>L0 协议层</b></td>
+        <td><span class="mono">packages/shared</span></td>
+        <td>ScriptEvent 协议 + zod schema、端口接口（EventBus / HttpPort / StoragePort / SpritePort）、纯函数（applyEvent 状态 fold、存档迁移类型）</td>
+        <td>不依赖任何包、不碰平台 API（DOM/fetch/Node 一概不见）；仅允许 zod</td>
+      </tr>
+      <tr>
+        <td><b>L1 核心业务</b></td>
+        <td><span class="mono">packages/director</span><br><span class="mono">packages/engine/src/core</span></td>
+        <td>剧情引擎：导演/编剧编排、NDJSON 解析器、记忆（摘要/世界书/历史）、选项与世界状态；演出内核：状态机、演出时钟、ledger fold、存档策略、打字机节拍</td>
+        <td>只 import L0 接口；一切平台 I/O（网络/文件/渲染/音频）必须经端口注入</td>
+      </tr>
+      <tr>
+        <td><b>L2 适配层</b></td>
+        <td><span class="mono">engine/src/presentation · engine/src/saves</span><br><span class="mono">director/src/llm</span><br><span class="mono">packages/tts-bridge</span></td>
+        <td>端口的实现：PixiJS 立绘 / DOM 文本窗 / Web Audio 三通道、localStorage 与 TauriFs 存档、DeepSeek SSE 客户端、GPT-SoVITS Provider + 语音调度/降级链</td>
+        <td>实现 L0 端口；可 import 本包 core；禁止被 core 反向 import</td>
+      </tr>
+      <tr>
+        <td><b>L3 壳 + 组合根</b></td>
+        <td><span class="mono">packages/app</span><br><span class="mono">tools/*</span></td>
+        <td>React UI（标题/菜单/设置/存档面板）、平台探测、装配注入（唯一组合根）、Tauri 配置；tools 为独立 Node 脚本</td>
+        <td>唯一允许 import 所有包的层；具体实现类只允许出现在这里和 L2 目录</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <p><b>核心业务的操作性定义</b>：换掉 PixiJS、React、GPT-SoVITS、DeepSeek 中的任何一个，L0 + L1 一行不改——只新增/替换对应适配器。凡是满足这条的东西才配叫核心业务；凡是依赖具体库或平台 API 的都归 L2 以下。</p>
+
+  <figure>
+    <div class="fig-scroll">
+    <svg viewBox="0 0 900 560" role="img" aria-label="分层架构：app 注入端口并驱动主循环；director 产出 ScriptEvent 流给 engine 演出并经 tts-bridge 合成语音；三包只依赖 shared 协议；外部服务为 DeepSeek API 与本机 GPT-SoVITS">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" class="d-arrow"/>
+        </marker>
+      </defs>
+
+      <!-- 玩家 / app -->
+      <rect x="20" y="14" width="150" height="44" rx="8" class="nd"/>
+      <text x="95" y="41" text-anchor="middle" class="ndt">玩家</text>
+      <line x1="174" y1="36" x2="232" y2="36" class="fl" marker-end="url(#ah)"/>
+      <text x="204" y="26" text-anchor="middle" class="lbl">选择/输入</text>
+
+      <rect x="240" y="10" width="640" height="52" rx="8" class="nd"/>
+      <text x="252" y="32" class="ndt">packages/app · React 壳 + 组合根</text>
+      <text x="252" y="51" class="ndi">标题/菜单/设置/存档 UI —— 平台探测、注入 HttpPort·StoragePort、驱动主循环</text>
+      <text x="866" y="28" text-anchor="end" class="layer">L3</text>
+
+      <!-- 注入虚线 -->
+      <line x1="300" y1="66" x2="300" y2="106" class="fl fl-dash" marker-end="url(#ah)"/>
+      <text x="310" y="90" class="lbl">注入端口 · 订阅事件</text>
+      <line x1="680" y1="66" x2="680" y2="106" class="fl fl-dash" marker-end="url(#ah)"/>
+      <text x="690" y="90" class="lbl">主循环驱动</text>
+
+      <!-- engine -->
+      <rect x="20" y="112" width="400" height="158" rx="8" class="nd"/>
+      <text x="32" y="134" class="ndt">packages/engine · 演出层（纯 TS，框架无关）</text>
+      <text x="32" y="158" class="ndi">core/：状态机 · 演出时钟 · ledger fold · 存档策略</text>
+      <text x="32" y="178" class="ndi">presentation/：打字机文本窗 · PixiJS 立绘差分</text>
+      <text x="32" y="198" class="ndi">presentation/：Web Audio 三通道音频总线</text>
+      <text x="32" y="218" class="ndi">backlog（ledger 派生） · 已读管理</text>
+      <text x="32" y="238" class="ndi">saves/：localStorage · TauriFs 两套存档适配</text>
+      <text x="406" y="132" text-anchor="end" class="layer">L1+L2</text>
+
+      <!-- director -->
+      <rect x="480" y="112" width="400" height="158" rx="8" class="nd"/>
+      <text x="492" y="134" class="ndt">packages/director · 剧情引擎（核心业务）</text>
+      <text x="492" y="158" class="ndi">core/：导演 Agent（BeatDirective）</text>
+      <text x="492" y="178" class="ndi">core/：编剧 Agent（NDJSON 行流）· 解析器 · 记忆</text>
+      <text x="492" y="198" class="ndi">core/：选项生成（stateDelta + 隐藏后果）</text>
+      <text x="492" y="218" class="ndi">llm/：DeepSeek SSE 客户端（HttpPort 适配）</text>
+      <text x="492" y="238" class="ndi">输出：ScriptEvent 流（唯一对外产物）</text>
+      <text x="866" y="132" text-anchor="end" class="layer">L1+L2</text>
+
+      <!-- director -> engine -->
+      <line x1="476" y1="180" x2="426" y2="180" class="fl" marker-end="url(#ah)"/>
+      <text x="451" y="164" text-anchor="middle" class="lbl-imp">ScriptEvent 流</text>
+      <text x="451" y="198" text-anchor="middle" class="lbl">逐行 line:commit</text>
+
+      <!-- shared rail -->
+      <line x1="20" y1="330" x2="880" y2="330" class="rail-line"/>
+      <text x="420" y="320" text-anchor="middle" class="rail-t">packages/shared · L0 协议层：ScriptEvent（zod）＋ 端口 EventBus / HttpPort / StoragePort —— 三包唯一依赖，互不 import</text>
+      <text x="868" y="322" text-anchor="end" class="layer">L0</text>
+
+      <!-- tts-bridge -->
+      <rect x="20" y="352" width="400" height="92" rx="8" class="nd"/>
+      <text x="32" y="374" class="ndt">packages/tts-bridge · 语音适配层</text>
+      <text x="32" y="396" class="ndi">TTSProvider 接口 + 降级链（本地→云→静音估时）</text>
+      <text x="32" y="415" class="ndi">合成队列 1 并发 · configId 亲和排序（音色热切串行化）</text>
+      <text x="32" y="434" class="ndi">LRU 缓存（文本×音色） · Tauri 版磁盘缓存</text>
+      <text x="406" y="372" text-anchor="end" class="layer">L2</text>
+
+      <!-- 外部服务 -->
+      <rect x="20" y="484" width="400" height="64" rx="8" class="nd"/>
+      <text x="32" y="507" class="ndt">GPT-SoVITS（本机 :9880）</text>
+      <text x="32" y="528" class="ndi">api_v2：流式合成 · set_*_weights 运行时音色热切换</text>
+
+      <rect x="480" y="484" width="400" height="64" rx="8" class="nd"/>
+      <text x="492" y="507" class="ndt">DeepSeek API（云端 · 用户自己的 Key）</text>
+      <text x="492" y="528" class="ndi">导演：json_object 模式 · 编剧：SSE 流式</text>
+
+      <!-- 纵向流 -->
+      <line x1="120" y1="274" x2="120" y2="348" class="fl" marker-end="url(#ah)"/>
+      <text x="130" y="300" class="lbl">line:commit</text>
+      <text x="130" y="315" class="lbl">切句入队</text>
+
+      <line x1="330" y1="348" x2="330" y2="278" class="fl" marker-end="url(#ah)"/>
+      <text x="340" y="306" class="lbl">ReadyClip</text>
+      <text x="340" y="321" class="lbl">按序播放</text>
+
+      <line x1="220" y1="448" x2="220" y2="480" class="fl" marker-end="url(#ah)"/>
+      <text x="230" y="468" class="lbl">synthesize(text, voice)</text>
+
+      <line x1="700" y1="274" x2="700" y2="480" class="fl" marker-end="url(#ah)"/>
+      <text x="710" y="342" class="lbl">HttpPort.fetch</text>
+      <text x="710" y="358" class="lbl">开发期 Vite proxy</text>
+      <text x="710" y="374" class="lbl">打包 Tauri 无 CORS</text>
+      <text x="710" y="390" class="lbl">Key 只在用户本机</text>
+    </svg>
+    </div>
+    <figcaption><b>图 1 · 分层架构与层徽标。</b>实线=运行时数据流，虚线=装配期依赖注入。engine 与 director 互不依赖，只通过 L0 的 ScriptEvent 协议对话——剧情引擎可以拿录制的剧情文件做无头测试，浏览器/Tauri 两种形态只有 L3 一层不同。engine 与 director 内部各自再分 <span class="mono">core/</span>（L1）与适配目录（L2），包内同样执行「core 不见适配」。</figcaption>
+  </figure>
+
+  <h3 style="font-size:16.5px; margin:30px 0 4px; font-weight:700">包间 import 矩阵（行=谁发起 import，列=import 谁）</h3>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>↓ 包</th><th class="c">shared</th><th class="c">director</th><th class="c">engine</th><th class="c">tts-bridge</th><th class="c">app</th><th>允许的外部库</th></tr></thead>
+    <tbody>
+      <tr><td><b>shared</b></td><td class="c no-c">·</td><td class="c no-c">✕</td><td class="c no-c">✕</td><td class="c no-c">✕</td><td class="c no-c">✕</td><td>zod</td></tr>
+      <tr><td><b>director</b></td><td class="c yes">✓</td><td class="c no-c">·</td><td class="c no-c">✕</td><td class="c no-c">✕</td><td class="c no-c">✕</td><td>zod（不许 React/PixiJS/DOM）</td></tr>
+      <tr><td><b>engine</b></td><td class="c yes">✓</td><td class="c no-c">✕</td><td class="c no-c">·</td><td class="c no-c">✕</td><td class="c no-c">✕</td><td>pixijs —— 仅 <span class="mono">presentation/</span> 目录</td></tr>
+      <tr><td><b>tts-bridge</b></td><td class="c yes">✓</td><td class="c no-c">✕</td><td class="c no-c">✕</td><td class="c no-c">·</td><td class="c no-c">✕</td><td>零运行时依赖</td></tr>
+      <tr><td><b>app</b></td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c no-c">·</td><td>react / react-dom / @tauri-apps 插件（仅 <span class="mono">adapters/tauri/</span>）</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p><b>依赖倒置是强制的，不是口头约定</b>——三重机械强制，违反任何一条直接编译失败或 CI 红灯：</p>
+  <ul>
+    <li><b>深导入封锁</b>：每个包 <span class="mono">package.json</span> 的 <span class="mono">exports</span> 只开 <span class="mono">"."</span> 一个口（指向 <span class="mono">src/index.ts</span>）——跨包只能 import 公共 API，<span class="mono">import 'engine/src/presentation/SpriteLayer'</span> 这类路径直接解析失败</li>
+    <li><b>dependency-cruiser 进 CI</b>：声明上面整张矩阵 + 包内规则（core 目录不得 import 适配目录）+ 禁环；pnpm 声明依赖本身也是一层（未声明的包根本装不进来）</li>
+    <li><b>tsconfig project references + tsc -b</b>：类型层只看见允许引用的项目</li>
+  </ul>
+  <p><b>运行时注入</b>：构造函数注入，无 DI 框架——5 个包的规模上容器是过度设计。端口接口在 L0，实现类只在 L2/L3 出现，这就是依赖倒置的全部。</p>
+
+  <h3 style="font-size:16.5px; margin:30px 0 4px; font-weight:700">组合根：全仓库唯一，在 app</h3>
+  <p>平台探测、具体实现的选择、对象图的装配，只允许出现在 <span class="mono">app/src/bootstrap/</span>。其余任何包看到的世界里只有接口：</p>
+  <pre class="code"><span class="cm">// packages/app/src/bootstrap/createGameApp.ts —— 唯一的组合根</span>
+<span class="kw">export function</span> createGameApp(root: HTMLElement, config: UserConfig) {
+  <span class="cm">// 1. 平台探测 → 选适配器（具体实现唯一出现的地方）</span>
+  <span class="kw">const</span> http:  HttpPort    = isTauri() ? <span class="kw">new</span> TauriHttpPort() : <span class="kw">new</span> ProxyHttpPort('/llm', '/tts');
+  <span class="kw">const</span> store: StoragePort = isTauri() ? <span class="kw">new</span> TauriFsAdapter() : <span class="kw">new</span> LocalStorageAdapter();
+
+  <span class="cm">// 2. 构造核心（它们只认 L0 接口，不知道上面选了什么）</span>
+  <span class="kw">const</span> bus      = <span class="kw">new</span> EventBus();
+  <span class="kw">const</span> engine   = <span class="kw">new</span> EngineCore({ bus, sprites: <span class="kw">new</span> PixiSpriteLayer(root),
+                                     text: <span class="kw">new</span> DomTextLayer(root), audio: <span class="kw">new</span> WebAudioBus(root),
+                                     saves: <span class="kw">new</span> SaveSystem(store) });
+  <span class="kw">const</span> director = <span class="kw">new</span> StoryDirector({ http, config });  <span class="cm">// 内含 SSE 客户端+解析器+记忆</span>
+  <span class="kw">const</span> voice    = <span class="kw">new</span> VoiceScheduler({ http,
+                    chain: [<span class="kw">new</span> GptSoVitsProvider(http), <span class="kw">new</span> CloudTtsProvider(http), <span class="kw">new</span> SilentProvider()] });
+
+  <span class="cm">// 3. 接线：协议事件是唯一粘合剂（engine/director/tts-bridge 之间无直接引用）</span>
+  bus.on('line:commit', e =&gt; voice.enqueue(e));
+  voice.onClip(clip =&gt; engine.playVoice(clip));
+
+  <span class="kw">return new</span> GameApp({ engine, director, voice, bus, ui: mountReact(root) });
+}</pre>
+</section>
+
+<section>
+  <h2>一「拍」的生命周期：互动发生在哪里</h2>
+  <figure>
+    <div class="fig-scroll">
+    <svg viewBox="0 0 900 400" role="img" aria-label="一拍循环：导演发指令，编剧一次流式调用输出十到三十行，逐行上屏配音，拍末弹选项，玩家选择更新世界状态后带着新状态进入下一拍">
+      <defs>
+        <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" class="d-arrow"/>
+        </marker>
+      </defs>
+
+      <rect x="20" y="28" width="250" height="78" rx="8" class="nd"/>
+      <text x="32" y="52" class="ndt">① 导演 · nextBeat</text>
+      <text x="32" y="72" class="ndi">一次小 JSON 调用</text>
+      <text x="32" y="90" class="ndi">大纲位置+世界状态 → 拍指令</text>
+
+      <rect x="330" y="28" width="290" height="78" rx="8" class="nd nd-acc"/>
+      <text x="342" y="52" class="ndt" style="fill:var(--zhu)">② 编剧 · generate</text>
+      <text x="342" y="72" class="ndi">一次流式调用（SSE），不是每句一调</text>
+      <text x="342" y="90" class="ndi">连续输出 10~30 行 NDJSON</text>
+
+      <rect x="680" y="28" width="200" height="78" rx="8" class="nd"/>
+      <text x="692" y="52" class="ndt">③ 逐行提交</text>
+      <text x="692" y="72" class="ndi">打字机逐字上屏</text>
+      <text x="692" y="90" class="ndi">切句进 TTS 队列</text>
+
+      <rect x="680" y="296" width="200" height="78" rx="8" class="nd"/>
+      <text x="692" y="320" class="ndt">④ 拍末 · segmentEnd</text>
+      <text x="692" y="340" class="ndi">弹出 3~4 个选项</text>
+      <text x="692" y="358" class="ndi">+ 自由输入入口</text>
+
+      <rect x="330" y="296" width="290" height="78" rx="8" class="nd"/>
+      <text x="342" y="320" class="ndt">⑤ 玩家选择 / 自由输入</text>
+      <text x="342" y="340" class="ndi">每个选项带好感/标志位增量</text>
+      <text x="342" y="358" class="ndi">隐藏后果只进世界状态，不上屏</text>
+
+      <rect x="20" y="296" width="250" height="78" rx="8" class="nd"/>
+      <text x="32" y="320" class="ndt">⑥ 状态更新 · 记忆累积</text>
+      <text x="32" y="340" class="ndi">应用 stateDelta；本拍剧情入历史</text>
+      <text x="32" y="358" class="ndi">摘要滚动——喂给下一拍的输入</text>
+
+      <line x1="274" y1="67" x2="324" y2="67" class="fl" marker-end="url(#ah2)"/>
+      <text x="300" y="55" text-anchor="middle" class="lbl">BeatDirective</text>
+      <line x1="624" y1="67" x2="674" y2="67" class="fl" marker-end="url(#ah2)"/>
+      <text x="650" y="55" text-anchor="middle" class="lbl">SSE 增量</text>
+      <line x1="780" y1="110" x2="780" y2="290" class="fl" marker-end="url(#ah2)"/>
+      <line x1="676" y1="335" x2="626" y2="335" class="fl" marker-end="url(#ah2)"/>
+      <line x1="326" y1="335" x2="276" y2="335" class="fl" marker-end="url(#ah2)"/>
+      <line x1="145" y1="292" x2="145" y2="112" class="fl" marker-end="url(#ah2)"/>
+      <text x="155" y="192" class="lbl-imp">带着新状态</text>
+      <text x="155" y="208" class="lbl-imp">进入下一拍</text>
+      <text x="475" y="126" text-anchor="middle" class="lbl">每拍共 2 次 API 调用（导演 1 + 编剧 1），其余全是本地工作</text>
+    </svg>
+    </div>
+    <figcaption><b>图 2 · 一拍循环。</b>红框是生成粒度的答案：一次流式调用承载一整拍——「根据选择变化」发生在 ⑤⑥：选择产生的状态增量和刚发生的剧情一起，成为下一拍 ①② 的输入，剧情由此分岔；已写好的行进入 ledger 永不重写。</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>拍内流水线：为什么语音不会断档</h2>
+  <figure>
+    <div class="fig-scroll">
+    <svg viewBox="0 0 900 320" role="img" aria-label="时序图：LLM 流式输出零到十三秒，打字机一点五秒起持续显示，TTS 每句零点四秒合成并持续领先语音播放至少一句">
+      <defs>
+        <marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" class="d-arrow"/>
+        </marker>
+      </defs>
+
+      <rect x="540" y="12" width="13" height="13" rx="3" class="bar-gen"/>
+      <text x="560" y="23" class="chip">生成（LLM / GPU 合成）</text>
+      <rect x="716" y="12" width="13" height="13" rx="3" class="bar-use"/>
+      <text x="736" y="23" class="chip">呈现（上屏 / 播放）</text>
+
+      <line x1="150" y1="40" x2="150" y2="262" class="grid-t"/>
+      <line x1="270" y1="40" x2="270" y2="262" class="grid-t"/>
+      <line x1="390" y1="40" x2="390" y2="262" class="grid-t"/>
+      <line x1="510" y1="40" x2="510" y2="262" class="grid-t"/>
+      <line x1="630" y1="40" x2="630" y2="262" class="grid-t"/>
+      <line x1="750" y1="40" x2="750" y2="262" class="grid-t"/>
+      <line x1="870" y1="40" x2="870" y2="262" class="grid-t"/>
+      <text x="150" y="280" text-anchor="middle" class="tick">0s</text>
+      <text x="270" y="280" text-anchor="middle" class="tick">4s</text>
+      <text x="390" y="280" text-anchor="middle" class="tick">8s</text>
+      <text x="510" y="280" text-anchor="middle" class="tick">12s</text>
+      <text x="630" y="280" text-anchor="middle" class="tick">16s</text>
+      <text x="750" y="280" text-anchor="middle" class="tick">20s</text>
+      <text x="870" y="280" text-anchor="middle" class="tick">24s</text>
+
+      <text x="142" y="60" text-anchor="end" class="ann">LLM 流式输出</text>
+      <rect x="150" y="44" width="390" height="24" rx="4" class="bar-gen"/>
+      <text x="160" y="60" class="ann" style="fill:#fff">一拍 10~30 行，一次调用</text>
+
+      <text x="142" y="96" text-anchor="end" class="ann">打字机逐字</text>
+      <rect x="195" y="80" width="675" height="24" rx="4" class="bar-use"/>
+      <text x="205" y="96" class="ann" style="fill:#fff">首行到手上屏（半行窥视再提前 ~1s），边生成边显示</text>
+
+      <text x="142" y="132" text-anchor="end" class="ann">TTS 合成 ≤0.5s/句</text>
+      <rect x="216" y="116" width="15" height="24" rx="3" class="bar-gen"/>
+      <rect x="264" y="116" width="15" height="24" rx="3" class="bar-gen"/>
+      <rect x="318" y="116" width="15" height="24" rx="3" class="bar-gen"/>
+      <rect x="396" y="116" width="15" height="24" rx="3" class="bar-gen"/>
+      <rect x="480" y="116" width="15" height="24" rx="3" class="bar-gen"/>
+      <rect x="546" y="116" width="15" height="24" rx="3" class="bar-gen"/>
+
+      <text x="142" y="168" text-anchor="end" class="ann">语音播放</text>
+      <rect x="231" y="152" width="210" height="24" rx="4" class="bar-use"/>
+      <rect x="441" y="152" width="180" height="24" rx="4" class="bar-use"/>
+      <rect x="621" y="152" width="150" height="24" rx="4" class="bar-use"/>
+      <rect x="771" y="152" width="99" height="24" rx="4" class="bar-use"/>
+
+      <line x1="441" y1="40" x2="441" y2="240" class="ann-line"/>
+      <text x="449" y="230" class="lbl-imp">第 2 句开播时，第 3 句早在 6.1s 就合成完了——生成永远领先播放 ≥1 句</text>
+    </svg>
+    </div>
+    <figcaption><b>图 3 · 拍内时序（示意数值，P0 实测校准）。</b>「一句一句」是流内部的上屏和配音节奏：句子从同一条流里切出来，逐句交给 TTS；生成 0.4s/句 vs 播放 6s/句，余量 10 倍以上，所以听感是连续的，而 API 只花了一拍一次的钱。</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>成本：按拍付费，按互动增长</h2>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>调用</th><th>频率</th><th>输入（约）</th><th>输出（约）</th><th>费用（约）</th></tr></thead>
+    <tbody>
+      <tr><td>导演 nextBeat</td><td>每拍 1 次</td><td class="num">700 tok</td><td class="num">200 tok</td><td class="num">¥0.006</td></tr>
+      <tr><td>编剧 generate（流式）</td><td>每拍 1 次</td><td class="num">4,000 tok<br><span class="mut" style="font-size:12px">角色卡+世界书+摘要+近史+拍指令</span></td><td class="num">1,200 tok<br><span class="mut" style="font-size:12px">10~30 行</span></td><td class="num">¥0.017</td></tr>
+      <tr><td>滚动摘要（便宜模型）</td><td>每场景 1 次</td><td class="num">2,000 tok</td><td class="num">300 tok</td><td class="num">¥0.006</td></tr>
+    </tbody>
+    <tfoot>
+      <tr><th colspan="4">每拍合计（一次选择 = 一次互动）</th><th class="num">≈ ¥0.03</th></tr>
+      <tr><td colspan="4">2 小时游玩（≈40 拍）</td><td class="num">≈ ¥1.2</td></tr>
+      <tr><td colspan="4">一部完整作品（≈300 拍，含分支重玩按 2 倍计）</td><td class="num">≈ ¥18</td></tr>
+    </tfoot>
+  </table>
+  </div>
+  <p class="mut" style="font-size:13px">按 DeepSeek 2026-10 官方页价格（$0.27/$1.10 每百万 token）估算；角色卡、世界书这些每拍重复注入的前缀还能命中 DeepSeek 的上下文缓存再降一档，采购前以官方页复核。</p>
+  <ul>
+    <li><b>钱只花在新增内容上</b>：已生成的行进 ledger 永不重新生成；玩家的每次选择只决定「下一拍写什么」，不是「重写一遍」。</li>
+    <li><b>输入有上限</b>：注入的近史是滑动窗口（约 2000 token），更早的剧情压成几百 token 的摘要——玩 10 小时输入不会涨 10 倍。</li>
+    <li><b>对玩家透明</b>：API Key 是玩家自己的，成本天然由用量自担；游戏本体和引擎开源，不经手任何人的 Key。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>开源库落位：哪个库、在哪个包、哪个目录</h2>
+  <p>原则：<b>库只许出现在它所属的层的目录里</b>，dependency-cruiser 按「允许出现的目录」逐条检查：</p>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>库</th><th class="c" style="width:12%">许可证</th><th style="width:17%">落位包</th><th style="width:26%">允许出现的目录</th><th>用途 / 备注</th></tr></thead>
+    <tbody>
+      <tr><td><span class="mono">zod</span></td><td class="c">MIT</td><td>shared（其余包经 shared 间接用）</td><td><span class="mono">shared/src/**</span></td><td>协议行 / 导演 JSON / 存档迁移校验</td></tr>
+      <tr><td><span class="mono">pixijs</span> v8</td><td class="c">MIT</td><td>engine</td><td><span class="mono">engine/src/presentation/</span> 仅此</td><td>立绘差分渲染；核心经 SpritePort 用它，不知其存在</td></tr>
+      <tr><td><span class="mono">react</span> / <span class="mono">react-dom</span> 18</td><td class="c">MIT</td><td>app</td><td><span class="mono">app/src/ui/**</span></td><td>壳 UI；订阅引擎事件用 useSyncExternalStore，不用状态库</td></tr>
+      <tr><td><span class="mono">@tauri-apps/api</span> + plugin-http / fs / dialog</td><td class="c">MIT / Apache-2.0</td><td>app</td><td><span class="mono">app/src/adapters/tauri/</span> 仅此</td><td>TauriHttpPort / TauriFsAdapter 的实现细节</td></tr>
+      <tr><td><span class="mono">vitest</span> + happy-dom</td><td class="c">MIT</td><td>dev（全仓）</td><td><span class="mono">**/*.test.ts</span></td><td>黄金测试 / 纯函数 / engine 无头回放</td></tr>
+      <tr><td><span class="mono">@biomejs/biome</span></td><td class="c">MIT</td><td>dev（根）</td><td>—</td><td>lint + format 一个工具全包</td></tr>
+      <tr><td><span class="mono">turborepo</span> + pnpm workspaces</td><td class="c">MIT</td><td>dev（根）</td><td>—</td><td>任务编排；tsc -b 管类型边界</td></tr>
+      <tr><td><span class="mono">dependency-cruiser</span></td><td class="c">MIT</td><td>dev（根）</td><td>—</td><td>包间/包内依赖规则进 CI（依赖倒置的强制手段）</td></tr>
+      <tr><td><b>手写</b> SSE 客户端（~100 行）</td><td class="c">—</td><td>director</td><td><span class="mono">director/src/llm/</span></td><td>DeepSeek 流式；Vercel AI SDK 评估后否决（我们要 NDJSON 协议不是 streamObject）</td></tr>
+      <tr><td>GPT-SoVITS</td><td class="c">MIT</td><td><b>外部服务</b></td><td>不进仓库</td><td>本机运行，经 HttpPort 调 :9880</td></tr>
+      <tr><td>参考不依赖：Monogatari(MIT) / Pixi'VN(MIT) / SillyTavern(AGPL 只借思路) / talemate(AGPL 只借思路) / GalTransl</td><td class="c">—</td><td>不 import</td><td>—</td><td>读源码借鉴设计；AGPL 代码一行不进仓库</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>工程规范（定稿）</h2>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th style="width:16%">域</th><th>规定</th></tr></thead>
+    <tbody>
+      <tr><td><b>TypeScript</b></td><td>strict 全开；ESM（<span class="mono">"type":"module"</span>）；<span class="mono">tsc -b</span> project references；禁 <span class="mono">any</span>（确需则注释理由）；禁 <span class="mono">// @ts-ignore</span>（用 <span class="mono">@ts-expect-error</span> + 注释）；公共 API 全部显式返回类型</td></tr>
+      <tr><td><b>包边界</b></td><td>import 矩阵（上文）+ exports 只开 "." + dependency-cruiser 规则进 CI；包内 <span class="mono">core/</span> 不得 import 适配目录；禁止循环依赖（零容忍，出现即设计错误）</td></tr>
+      <tr><td><b>命名</b></td><td>端口接口后缀 <span class="mono">Port</span>、实现后缀 <span class="mono">Adapter/Provider/Layer</span>、zod schema 后缀 <span class="mono">Schema</span>、协议事件后缀 <span class="mono">Event/Cmd</span>；文件名随主导出（类 PascalCase、函数 camelCase）；测试 <span class="mono">*.test.ts</span> 与被测文件同目录；禁止 <span class="mono">I</span> 前缀、禁止 <span class="mono">Util/Helper</span> 垃圾桶命名</td></tr>
+      <tr><td><b>错误处理</b></td><td>端口边界只抛 typed <span class="mono">PortError</span> 子类；LLM 流失败一律续写式恢复（带 ledgerTail），禁原样重试；禁吞异常（catch 必须 rethrow 或转事件）；坏 JSON 行丢弃+计数，连续 3 行坏中止本拍</td></tr>
+      <tr><td><b>测试</b></td><td>四类必测并设为 CI 门禁：① NDJSON 解析黄金测试（fixture 录制流，含坏行/裸换行/打断）② 纯函数（applyEvent fold、日文切句、存档迁移链）③ engine 无头回放（fixture 喂演出层）④ 协议 schema 快照。不追全局覆盖率数字</td></tr>
+      <tr><td><b>提交与分支</b></td><td>Conventional Commits（<span class="mono">feat/fix/refactor/test/docs/chore</span>，英文主题一行、正文可中文）；主干 main + 短生命周期分支；pre-commit 钩子跑 <span class="mono">biome check</span> + 受影响包的 vitest</td></tr>
+      <tr><td><b>仓库纪律</b></td><td><span class="mono">assets/</span> 第一天进 .gitignore，仓库只放 CC0 占位 + LICENSE-ASSETS；<span class="mono">.env*</span> 忽略（用户 Key 只存本地，永不入 Git）；根目录 LICENSE(MIT) + README（含信任模型声明）</td></tr>
+      <tr><td><b>UI 文案</b></td><td>一律进 <span class="mono">app/src/i18n/</span> 字典（zh-CN 默认，ja/en 预留），禁止散落在组件里；游戏内文本（日语）与 UI 文案严格分离</td></tr>
+      <tr><td><b>CI（P2 起）</b></td><td>push 即跑：biome + tsc -b + dependency-cruiser + vitest；打 tag 触发 Tauri 桌面构建出 Release 产物</td></tr>
+      <tr><td><b>决策记录</b></td><td>重大取舍写 <span class="mono">docs/adr/NNN-短标题.md</span>（一页：背景/决定/代价），如 001-NDJSON-vs-streamObject、002-Tauri-vs-Electron——开源后这是贡献者的第一手语境</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="mut" style="font-size:13.5px">规范执行顺序：能机械强制的（边界/类型/格式/测试门禁）全部交给工具，靠自觉的只剩命名品味和提交信息——这两样 review 里管。</p>
+</section>
+
+<footer>
+  依据：<span class="mono">C:\Users\u1\.claude\plans\c-users-u1-claude-plans-galgame-imperati-swift-eich.md</span>（架构定稿）· 数值为估算，P0 原型实测后校准。
+</footer>
+
+</div>
