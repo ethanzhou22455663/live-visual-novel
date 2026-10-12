@@ -1,0 +1,14 @@
+{
+  "name": "galgame",
+  "private": true,
+  "packageManager": "pnpm@12.11.2",
+  "scripts": {
+    "dev": "turbo run dev --filter=@gal/app",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "e2e:p0": "node tools/p0-e2e.mjs"
+  },
+  "devDependencies": {
+    "turbo": "^2.11.7"
+  }
+}

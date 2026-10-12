@@ -22,6 +22,8 @@ coverage/
 *.tsbuildinfo
 *.log
 npm-debug.log*
+# 本机网络环境的 registry 覆盖(npmmirror),不入库——贡献者用各自默认 registry
+/.npmrc
 
 # ---- Tauri（P2 打包时生效） ----
 src-tauri/target/
