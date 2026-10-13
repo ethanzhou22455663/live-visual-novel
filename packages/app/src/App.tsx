@@ -23,6 +23,7 @@ export function App() {
   const [log, setLog] = useState<LogLine[]>([]);
   const [preview, setPreview] = useState("");
   const [error, setError] = useState("");
+  const [voiceFail, setVoiceFail] = useState(0);
 
   const textRef = useRef<HTMLDivElement>(null);
   const typewriterRef = useRef<Typewriter | null>(null);
@@ -44,6 +45,7 @@ export function App() {
 
     setPhase("running");
     setError("");
+    setVoiceFail(0);
     setLog([]);
     setCurrent(null);
     setStatus("LLM 接続中…");
@@ -55,7 +57,7 @@ export function App() {
         {
           apiKey: "", // dev:key 由 Vite proxy 注入,浏览器永远拿不到
           llmBaseUrl: "/llm",
-          ttsBaseUrl: "/tts",
+          ttsBaseUrl: "", // dev:Provider 自拼 "/tts" → Vite proxy 1:1 转发 9880("/tts/tts" 是 404 陷阱,勿传 "/tts")
           refAudioPath: refPath,
           promptText: import.meta.env.VITE_TTS_PROMPT_TEXT ?? "",
           scenePrompt: SCENE_PROMPT,
@@ -83,6 +85,9 @@ export function App() {
             await typewriterRef.current!.start(ev.text);
           },
           voiceChannel: vcRef.current,
+          onVoiceState: (lineId, state) => {
+            if (state === "failed") setVoiceFail((n) => n + 1); // 降级可见化:静音不再无声无息
+          },
         },
       );
       setStatus(`完走:${n} 行`);
@@ -151,6 +156,7 @@ export function App() {
           </button>
         )}
         <span className="status">{status}</span>
+        {voiceFail > 0 && <span className="error">音声失敗×{voiceFail}(静音降級)</span>}
       </div>
       {error && <div className="error">{error}</div>}
       <p className="hint">画面クリック=打字机快进 / GPT-SoVITS(127.0.0.1:9880)と DeepSeek proxy が稼働中であること</p>
