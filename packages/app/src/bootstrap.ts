@@ -142,7 +142,16 @@ async function assemble(): Promise<Assembled> {
   const bus = new EventBus();
   const clock = new PresentationClock();
   clock.start();
-  const engine = new EngineCore({ bus, clock, stage, content, textEl, cps: 28 });
+  const engine = new EngineCore({
+    bus,
+    clock,
+    stage,
+    content,
+    textEl,
+    choiceRoot: holder, // 选项浮层挂舞台内(engine DOM;React 不再画选项)
+    skipAutoPick: true, // skip 模式自动选默认项
+    cps: 28,
+  });
 
   // 名牌随提交行更新(commit 事务点;replay 不发 line:commit,M5 读档后补同步)
   bus.on("line:commit", ({ event }) => {

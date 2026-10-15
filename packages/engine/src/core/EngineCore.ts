@@ -33,6 +33,7 @@ import type {
 import type { EventBus } from "./EventBus.ts";
 import type { PresentationClock } from "./PresentationClock.ts";
 import type { StagePort } from "../presentation/ports.ts";
+import { ChoiceOverlay } from "../game/ChoiceOverlay.ts";
 import { Typewriter } from "../Typewriter.ts";
 
 export type EnginePhase = GameEventMap["engine:phase"]["phase"];
@@ -58,6 +59,10 @@ export interface EngineCoreDeps {
   content: ContentPort;
   /** 打字机上屏目标(台词窗正文元素,样式归 chrome) */
   textEl: HTMLElement;
+  /** 选项浮层挂载点(舞台根);缺省 = 无浮层(headless 测试/纯引擎用法) */
+  choiceRoot?: HTMLElement;
+  /** skip 模式下自动选 defaultOptionId(M4);默认开 */
+  skipAutoPick?: boolean;
   /** 每秒字数(设置面板 M6 可调;默认同 P0) */
   cps?: number;
 }
@@ -79,18 +84,34 @@ export class EngineCore {
   #currentLineId: LineId | null = null;
   #twWaiters = new Map<LineId, Set<() => void>>();
   #currentLine: { who: string; emotion: string } | null = null;
+  #skipAutoPick: boolean;
+  #choiceOverlay: ChoiceOverlay | null = null;
 
   constructor(deps: EngineCoreDeps) {
     this.bus = deps.bus;
     this.clock = deps.clock;
     this.stage = deps.stage;
     this.content = deps.content;
+    this.#skipAutoPick = deps.skipAutoPick ?? true;
     this.#tw = new Typewriter(deps.textEl, { cps: deps.cps ?? 30 });
     this.#tw.onProgress = (ratio) => {
       if (this.#currentLineId) {
         this.bus.emit("typewriter:progress", { lineId: this.#currentLineId, ratio });
       }
     };
+    if (deps.choiceRoot) {
+      this.#choiceOverlay = new ChoiceOverlay({
+        bus: this.bus,
+        root: deps.choiceRoot,
+        onPick: (id) => this.resolveChoice(id),
+      });
+    }
+    // 选项停等中切到 skip → 立即按默认项收束(offer 时刻已是 skip 的路径在 commitModel)
+    this.clock.onModeChange((mode) => {
+      if (mode === "skip" && this.#skipAutoPick && this.#pendingChoice) {
+        this.resolveChoice(this.#pendingChoice.defaultOptionId);
+      }
+    });
   }
 
   // ---- 只读视图 ----
@@ -232,6 +253,12 @@ export class EngineCore {
     this.#seq = seq + 1;
     this.bus.emit("line:commit", { event: ev, lineId });
     this.#notify();
+
+    // skip 模式(offer 时刻已是 skip 的路径):选项按默认项立即收束。
+    // 必须在本事件入账后执行——resolveChoice 回扫 ledger 取 hidden delta
+    if (ev.t === "choice" && this.clock.mode === "skip" && this.#skipAutoPick) {
+      this.resolveChoice(ev.defaultOptionId);
+    }
     return { ev, lineId };
   }
 

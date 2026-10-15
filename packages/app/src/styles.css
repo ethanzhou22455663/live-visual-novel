@@ -205,50 +205,10 @@
   color: #ff7a7a;
 }
 
-/* 选项浮层(临时按钮;M4 换 ChoiceOverlay) */
-.choice-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 8;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 22px;
-  background: rgb(8 9 14 / 0.35);
+/* 选项浮层 = engine ChoiceOverlay(gal-choice*,机制样式内联自足)。 */
+/* 1920×1080 舞台坐标系:字号/间距随 --stage-scale 缩放,这里只调 hover 质感 */
+.gal-choice-btn:focus-visible {
+  outline: 2px solid var(--accent, #7aa2ff);
+  outline-offset: 2px;
 }
 
-.choice-prompt {
-  margin: 0;
-  padding: 10px 26px;
-  border-radius: 999px;
-  background: rgb(12 13 20 / 0.85);
-  border: 1px solid rgb(255 255 255 / 0.14);
-  font-size: 18px;
-  color: #f0eef8;
-}
-
-.choice-list {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 420px;
-}
-
-.choice-btn {
-  padding: 16px 30px;
-  font-size: 18px;
-  text-align: left;
-  color: #f0eef8;
-  background: rgb(16 17 26 / 0.88);
-  border: 1px solid rgb(255 255 255 / 0.18);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
-}
-
-.choice-btn:hover {
-  border-color: var(--accent, #7aa2ff);
-  background: rgb(23 26 38 / 0.92);
-  transform: translateX(4px);
-}

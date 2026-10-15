@@ -1,6 +1,6 @@
 /**
- * 最小 play 壳(M3):舞台与台词窗是原生 DOM(bootstrap),React 只做 chrome——
- * 标题画面、临时选项按钮、状态条/preview/警告。UI 面板(存档/设置/backlog)M4-M6。
+ * 最小 play 壳(M3→M4):舞台/台词窗/选项浮层都是原生 DOM(bootstrap+engine),
+ * React 只做 chrome——标题画面、状态条/preview/警告。面板(存档/设置/backlog)M5-M6。
  */
 import { useEffect, useState } from "react";
 import type { EngineSnapshot } from "@gal/engine";
@@ -97,24 +97,6 @@ export function App() {
           </button>
         )}
       </div>
-
-      {snap.pendingChoice && (
-        <div className="choice-overlay">
-          {snap.pendingChoice.prompt && <p className="choice-prompt">{snap.pendingChoice.prompt}</p>}
-          <div className="choice-list">
-            {snap.pendingChoice.options.map((o) => (
-              <button
-                key={o.id}
-                type="button"
-                className="choice-btn"
-                onClick={() => asm.engine.resolveChoice(o.id)}
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </>
   );
 }
