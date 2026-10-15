@@ -6,12 +6,15 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@gal/shared": "workspace:*"
   },
   "devDependencies": {
-    "typescript": "^7.0.2"
+    "happy-dom": "^20.0.11",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
   }
 }

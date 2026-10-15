@@ -3,9 +3,17 @@
  * engine/director/tts-bridge 只依赖这里的接口。
  * P0 只落地 TTS 相关端口;GameEventMap 全量先定义(引擎 P1 实现完整总线)。
  */
+import type { PublicChoiceOffer } from "../protocol/script.ts";
 import type { ScriptEvent } from "../protocol/script.ts";
 
 export type LineId = string;
+
+/** 舞台呈现快照(存档/恢复用;bgm 归音频侧单独记录) */
+export interface PresentationSnapshot {
+  bg: string | null;
+  bgm: string | null;
+  sprites: Record<string, { slot: "left" | "center" | "right"; emotion: string }>;
+}
 
 // ---------- TTS(plan §2.3) ----------
 
@@ -49,22 +57,26 @@ export interface TtsProvider {
 export type ClockMode = "normal" | "fast" | "skip" | "auto";
 
 export interface GameEventMap {
-  "engine:phase": { phase: "title" | "play" | "pause" | "menu" | "ending" };
+  "engine:phase": { phase: "title" | "play" | "choicing" | "pause" | "menu" | "ending" };
   "generation:status": {
     phase: "idle" | "directing" | "writing" | "choicing" | "aborted" | "error";
     turnNo: number;
     error?: string;
   };
-  /** 事务点:存档/TTS 入队/backlog 全挂这 */
+  /** 事务点:存档/TTS 入队/backlog 全挂这(replay 重放时不发,见 EngineCore.replay) */
   "line:commit": { event: ScriptEvent; lineId: LineId };
   "line:skip": { lineId: LineId };
   "typewriter:progress": { lineId: LineId; ratio: number };
   "typewriter:done": { lineId: LineId };
-  "choice:offered": { choice: Extract<ScriptEvent, { t: "choice" }> };
+  /** 只携带公开视图;hidden 后果仅 resolveChoice 路径可见(plan §1.5) */
+  "choice:offered": { choice: PublicChoiceOffer };
+  "choice:resolved": { optionId: string; label: string };
   "voice:state": {
     lineId: LineId;
     state: "synth" | "ready" | "playing" | "done" | "failed" | "muted";
   };
   "clock:mode": { mode: ClockMode };
   "save:written": { slot: string };
+  /** 非致命告警:未知表情回退、缺图占位、TTS 降级等 */
+  "engine:warning": { message: string };
 }

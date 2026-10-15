@@ -1,0 +1,344 @@
+/**
+ * EngineCore(plan §2.2 / M2):游戏状态唯一持有者——ledger、游标、phase 状态机、
+ * 模型事件提交事务点。副作用只经 EventBus 与端口;DOM 仅打字机目标元素。
+ * BeatRunner(M3)是唯一"驾驶者";React 经 snapshot/subscribe 只读。
+ *
+ * 拍号语义(§1.1):turnNo=拍号(1 起),seq=拍内序号(0 起);
+ * beginTurn 分配新拍号,同拍续写用 resumeTurn 续 seq,行号单调不重复。
+ */
+import {
+  EMPTY_WORLD,
+  WorldDeltaSchema,
+  commitModelEvent,
+  cursorAfter,
+  foldWorld,
+  makeLineId,
+} from "@gal/shared";
+import type {
+  ClockMode,
+  ContentPort,
+  EmotionTag,
+  GameEventMap,
+  LineId,
+  LedgerEntry,
+  ModelScriptEvent,
+  PresentationSnapshot,
+  PublicChoiceOffer,
+  ScriptEvent,
+  SpeakerId,
+  WorldState,
+} from "@gal/shared";
+import type { EventBus } from "./EventBus.ts";
+import type { PresentationClock } from "./PresentationClock.ts";
+import type { StagePort } from "../presentation/ports.ts";
+import { Typewriter } from "../Typewriter.ts";
+
+export type EnginePhase = GameEventMap["engine:phase"]["phase"];
+
+/** React useSyncExternalStore 的只读视图(hidden 永不出现在此) */
+export interface EngineSnapshot {
+  phase: EnginePhase;
+  clockMode: ClockMode;
+  turnNo: number;
+  /** 下一个待分配游标(= SaveData.cursor,M5) */
+  cursor: { turnNo: number; seq: number };
+  world: WorldState;
+  pendingChoice: PublicChoiceOffer | null;
+  lineCount: number;
+}
+
+export interface EngineCoreDeps {
+  bus: EventBus;
+  clock: PresentationClock;
+  stage: StagePort;
+  content: ContentPort;
+  /** 打字机上屏目标(台词窗正文元素,样式归 chrome) */
+  textEl: HTMLElement;
+  /** 每秒字数(设置面板 M6 可调;默认同 P0) */
+  cps?: number;
+}
+
+export class EngineCore {
+  readonly bus: EventBus;
+  readonly clock: PresentationClock;
+  readonly stage: StagePort;
+  readonly content: ContentPort;
+
+  #ledger: LedgerEntry[] = [];
+  #turnNo = 1; // 当前拍号(beginTurn/resumeTurn 设置)
+  #seq = 0; // 拍内下一个待分配序号
+  #phase: EnginePhase = "title";
+  #world: WorldState = EMPTY_WORLD;
+  #pendingChoice: PublicChoiceOffer | null = null;
+  #listeners = new Set<() => void>();
+  #tw: Typewriter;
+  #currentLineId: LineId | null = null;
+
+  constructor(deps: EngineCoreDeps) {
+    this.bus = deps.bus;
+    this.clock = deps.clock;
+    this.stage = deps.stage;
+    this.content = deps.content;
+    this.#tw = new Typewriter(deps.textEl, { cps: deps.cps ?? 30 });
+    this.#tw.onProgress = (ratio) => {
+      if (this.#currentLineId) {
+        this.bus.emit("typewriter:progress", { lineId: this.#currentLineId, ratio });
+      }
+    };
+  }
+
+  // ---- 只读视图 ----
+
+  get phase(): EnginePhase {
+    return this.#phase;
+  }
+
+  get turnNo(): number {
+    return this.#turnNo;
+  }
+
+  /** 下一个待分配游标;ledger 空时从 1.0 开始 */
+  get cursor(): { turnNo: number; seq: number } {
+    if (this.#ledger.length === 0) return { turnNo: 1, seq: 0 };
+    const last = this.#ledger[this.#ledger.length - 1]!;
+    return { turnNo: last.turnNo, seq: last.seq + 1 };
+  }
+
+  get world(): WorldState {
+    return this.#world;
+  }
+
+  get ledger(): readonly LedgerEntry[] {
+    return this.#ledger;
+  }
+
+  get pendingChoice(): PublicChoiceOffer | null {
+    return this.#pendingChoice;
+  }
+
+  get typewriter(): Typewriter {
+    return this.#tw;
+  }
+
+  // ---- React 外部 store 契约 ----
+
+  snapshot(): EngineSnapshot {
+    return {
+      phase: this.#phase,
+      clockMode: this.clock.mode,
+      turnNo: this.#turnNo,
+      cursor: this.cursor,
+      world: this.#world,
+      pendingChoice: this.#pendingChoice,
+      lineCount: this.#ledger.length,
+    };
+  }
+
+  subscribe = (fn: () => void): (() => void) => {
+    this.#listeners.add(fn);
+    return () => this.#listeners.delete(fn);
+  };
+
+  #notify(): void {
+    for (const fn of [...this.#listeners]) fn();
+  }
+
+  // ---- phase 状态机 ----
+
+  setPhase(phase: EnginePhase): void {
+    if (this.#phase === phase) return;
+    this.#phase = phase;
+    this.bus.emit("engine:phase", { phase });
+    this.#notify();
+  }
+
+  setClockMode(mode: ClockMode): void {
+    this.clock.setMode(mode);
+  }
+
+  warn(message: string): void {
+    this.bus.emit("engine:warning", { message });
+  }
+
+  // ---- 拍事务(plan §1.1/§1.4) ----
+
+  /** 新拍:分配严格递增的新拍号,seq 归零 */
+  beginTurn(): number {
+    const last = this.#ledger[this.#ledger.length - 1];
+    this.#turnNo = last ? last.turnNo + 1 : 1;
+    this.#seq = 0;
+    return this.#turnNo;
+  }
+
+  /** 读档续写/同拍续写:沿用指定拍号,seq = 拍内下一个待分配序号 */
+  resumeTurn(turnNo: number, seq: number): void {
+    this.#turnNo = turnNo;
+    this.#seq = seq;
+  }
+
+  /**
+   * 提交事务点(§1.4):成员校验/净化 → 补拍号 → ledger → bus line:commit →
+   * 舞台应用 → choice 时挂起等玩家。返回引擎视角的已提交事件与行号。
+   * 不抛错——编剧输出是随机的,违规一律净化+告警,剧情不断。
+   */
+  commitModel(m: ModelScriptEvent): { ev: ScriptEvent; lineId: LineId } {
+    const turnNo = this.#turnNo;
+    const seq = this.#seq;
+    const lineId = makeLineId(turnNo, seq);
+    let ev = commitModelEvent(m, turnNo);
+
+    switch (ev.t) {
+      case "say": {
+        ev = { ...ev, emotion: this.#sanitizeEmotion(ev.who, ev.emotion) };
+        this.stage.speak(ev.who);
+        this.#present(lineId, ev.text);
+        break;
+      }
+      case "narrate": {
+        this.stage.speak(null);
+        this.#present(lineId, ev.text);
+        break;
+      }
+      case "stage": {
+        this.#applyStageOp(ev.op);
+        break;
+      }
+      case "choice": {
+        ev = this.#sanitizeChoice(ev);
+        const offer: PublicChoiceOffer = {
+          prompt: ev.prompt,
+          options: ev.options.map((o) =>
+            o.delta !== undefined ? { id: o.id, label: o.label, delta: o.delta } : { id: o.id, label: o.label },
+          ),
+          defaultOptionId: ev.defaultOptionId,
+        };
+        this.#pendingChoice = offer;
+        this.setPhase("choicing");
+        this.bus.emit("choice:offered", { choice: offer });
+        break;
+      }
+    }
+
+    this.#ledger.push({ kind: "ev", lineId, turnNo, seq, ev });
+    this.#seq = seq + 1;
+    this.bus.emit("line:commit", { event: ev, lineId });
+    this.#notify();
+    return { ev, lineId };
+  }
+
+  /** M4:校验属组 → 应用 delta → ledger → bus → 放行 BeatRunner。M2 仅占位断言不误用 */
+  get hasPendingChoice(): boolean {
+    return this.#pendingChoice !== null;
+  }
+
+  // ---- 重放(读档/回溯;不发 line:commit,语音/backlog 订阅者不受扰动) ----
+
+  replay(entries: readonly LedgerEntry[]): void {
+    this.#tw.cancel();
+    this.#currentLineId = null;
+    this.stage.reset();
+    this.#ledger = [...entries];
+    this.#world = foldWorld(entries);
+    this.#pendingChoice = null; // 选项即时性:重放不恢复"等玩家"状态
+    const c = cursorAfter(entries);
+    this.resumeTurn(c.turnNo, c.seq);
+    this.setPhase("play"); // 读档落地不回"choicing"(选项即时性:重放不恢复等玩家状态)
+    // 视觉终态:按序应用 bg/sprite/speak;shake/flash 是瞬态特效,重放跳过
+    for (const e of entries) {
+      if (e.kind !== "ev") continue;
+      const ev = e.ev;
+      if (ev.t === "say") {
+        this.stage.speak(ev.who);
+      } else if (ev.t === "narrate") {
+        this.stage.speak(null);
+      } else if (ev.t === "stage") {
+        this.#applyStageOp(ev.op, /* replay */ true);
+      }
+    }
+    this.#notify();
+  }
+
+  /** 打断当前打字机(Ctrl 快进/Esc):瞬间补完 */
+  advance(): void {
+    this.#tw.skip();
+  }
+
+  /** 舞台呈现快照(M5 存档用) */
+  presentationSnapshot(): PresentationSnapshot {
+    return this.stage.snapshot();
+  }
+
+  // ---- 内部 ----
+
+  #present(lineId: LineId, text: string): void {
+    this.#currentLineId = lineId;
+    void this.#tw.start(text).then(() => {
+      if (this.#currentLineId === lineId) {
+        this.bus.emit("typewriter:done", { lineId });
+      }
+    });
+  }
+
+  #sanitizeEmotion(who: SpeakerId, emotion: EmotionTag): EmotionTag {
+    if (!this.content.characterIds.has(who)) {
+      this.warn(`未知角色「${who}」的台词照常上屏(立绘/语音跳过)`);
+      return "";
+    }
+    if (emotion && this.content.emotionsOf(who).has(emotion)) return emotion;
+    const fallback = this.content.defaultExprOf(who);
+    if (emotion) this.warn(`未知表情「${emotion}」@${who} → 回退「${fallback || "(无立绘)"}」`);
+    return fallback;
+  }
+
+  #sanitizeChoice(ev: Extract<ScriptEvent, { t: "choice" }>): Extract<ScriptEvent, { t: "choice" }> {
+    const options = ev.options.filter((o) => o && typeof o.id === "string" && o.id.length > 0);
+    if (options.length !== ev.options.length) {
+      this.warn("选项含空 id,已剔除");
+    }
+    if (options.length === 0) {
+      this.warn("选项为空,插入占位「……」");
+      options.push({ id: "fallback", label: "……" });
+    }
+    let defaultId = ev.defaultOptionId;
+    if (!options.some((o) => o.id === defaultId)) {
+      defaultId = options[0]!.id;
+      this.warn(`defaultOptionId 无效 → 回退「${defaultId}」`);
+    }
+    return { ...ev, options, defaultOptionId: defaultId };
+  }
+
+  #applyStageOp(op: Extract<ScriptEvent, { t: "stage" }>["op"], replay = false): void {
+    switch (op.kind) {
+      case "bg":
+        this.stage.bg(op.asset, op.transition ?? "fade");
+        break;
+      case "sprite":
+        this.stage.sprite({ who: op.who, slot: op.slot, action: op.action, emotion: op.emotion });
+        break;
+      case "shake":
+        if (!replay) this.stage.shake();
+        break;
+      case "flash":
+        if (!replay) this.stage.flash();
+        break;
+      case "bgm":
+      case "se":
+        // M6 接线 AudioBus;ledger 里先忠实记录
+        break;
+    }
+  }
+}
+
+/** 选项 delta 过 schema(坑⑮):合法返回 delta,非法返回 undefined 并触发 onBad */
+export function parseChoiceDelta(
+  raw: unknown,
+  onBad: (msg: string) => void,
+): ReturnType<typeof WorldDeltaSchema.parse> | undefined {
+  if (raw === undefined) return undefined;
+  const r = WorldDeltaSchema.safeParse(raw);
+  if (!r.success) {
+    onBad(`WorldDelta 不合法,已丢弃:${JSON.stringify(r.error.issues)}`);
+    return undefined;
+  }
+  return r.data;
+}

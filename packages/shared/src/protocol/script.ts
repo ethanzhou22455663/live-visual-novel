@@ -75,6 +75,15 @@ export interface ChoiceOfferEvent {
   readonly defaultOptionId: string;
 }
 
+/** 剥离 hidden 的公开视图——UI/快照/总线只见过这个(plan §1.5) */
+export type PublicChoiceOption = Omit<ChoiceOption, "hidden">;
+
+export interface PublicChoiceOffer {
+  readonly prompt?: string;
+  readonly options: readonly PublicChoiceOption[];
+  readonly defaultOptionId: string;
+}
+
 export type ScriptEvent = SayEvent | NarrateEvent | StageEvent | ChoiceOfferEvent;
 
 /** 行 id 由引擎在提交时分配:turnNo.seq */
