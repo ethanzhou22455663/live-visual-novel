@@ -9,10 +9,12 @@
 import {
   EMPTY_WORLD,
   WorldDeltaSchema,
+  combineDeltas,
   commitModelEvent,
   cursorAfter,
   foldWorld,
   makeLineId,
+  mergeDelta,
 } from "@gal/shared";
 import type {
   ClockMode,
@@ -45,6 +47,8 @@ export interface EngineSnapshot {
   world: WorldState;
   pendingChoice: PublicChoiceOffer | null;
   lineCount: number;
+  /** 当前发言者(名牌;null=旁白/尚无行) */
+  currentLine: { who: string; emotion: string } | null;
 }
 
 export interface EngineCoreDeps {
@@ -73,6 +77,8 @@ export class EngineCore {
   #listeners = new Set<() => void>();
   #tw: Typewriter;
   #currentLineId: LineId | null = null;
+  #twWaiters = new Map<LineId, Set<() => void>>();
+  #currentLine: { who: string; emotion: string } | null = null;
 
   constructor(deps: EngineCoreDeps) {
     this.bus = deps.bus;
@@ -131,6 +137,7 @@ export class EngineCore {
       world: this.#world,
       pendingChoice: this.#pendingChoice,
       lineCount: this.#ledger.length,
+      currentLine: this.#currentLine,
     };
   }
 
@@ -190,11 +197,13 @@ export class EngineCore {
     switch (ev.t) {
       case "say": {
         ev = { ...ev, emotion: this.#sanitizeEmotion(ev.who, ev.emotion) };
+        this.#currentLine = { who: ev.who, emotion: ev.emotion };
         this.stage.speak(ev.who);
         this.#present(lineId, ev.text);
         break;
       }
       case "narrate": {
+        this.#currentLine = null;
         this.stage.speak(null);
         this.#present(lineId, ev.text);
         break;
@@ -231,11 +240,58 @@ export class EngineCore {
     return this.#pendingChoice !== null;
   }
 
+  /**
+   * 玩家选择(M3 起由 BeatRunner/UI 调):校验属组 → 自身+hidden delta 合并过 schema
+   * → world 入账 → ledger 追加 choice 条目 → bus choice:resolved → 回 play。
+   * 返回 null = 无待选或 id 不属本组(不产生任何副作用)。
+   */
+  resolveChoice(optionId: string): { optionId: string; label: string } | null {
+    const pending = this.#pendingChoice;
+    if (!pending) return null;
+    const opt = pending.options.find((o) => o.id === optionId);
+    if (!opt) {
+      this.warn(`选项「${optionId}」不属当前选项组,忽略`);
+      return null;
+    }
+    // 已提交 choice 事件(ledger 尾部)持有 hidden 后果;公开视图只有自身 delta
+    let ev: Extract<ScriptEvent, { t: "choice" }> | null = null;
+    for (let i = this.#ledger.length - 1; i >= 0; i--) {
+      const e = this.#ledger[i]!;
+      if (e.kind === "ev" && e.ev.t === "choice") {
+        ev = e.ev;
+        break;
+      }
+    }
+    const full = ev?.options.find((o) => o.id === optionId);
+    const delta = combineDeltas(
+      parseChoiceDelta(opt.delta, (m) => this.warn(m)),
+      parseChoiceDelta(full?.hidden?.delta, (m) => this.warn(m)),
+    );
+    if (delta) this.#world = mergeDelta(this.#world, delta);
+
+    const lineId = makeLineId(this.#turnNo, this.#seq);
+    this.#ledger.push({
+      kind: "choice",
+      lineId,
+      turnNo: this.#turnNo,
+      seq: this.#seq,
+      optionId: opt.id,
+      label: opt.label,
+      delta,
+    });
+    this.#seq += 1;
+    this.#pendingChoice = null;
+    this.setPhase("play");
+    this.bus.emit("choice:resolved", { optionId: opt.id, label: opt.label });
+    this.#notify();
+    return { optionId: opt.id, label: opt.label };
+  }
+
   // ---- 重放(读档/回溯;不发 line:commit,语音/backlog 订阅者不受扰动) ----
 
   replay(entries: readonly LedgerEntry[]): void {
-    this.#tw.cancel();
-    this.#currentLineId = null;
+    this.cancelTypewriter();
+    this.#currentLine = null;
     this.stage.reset();
     this.#ledger = [...entries];
     this.#world = foldWorld(entries);
@@ -263,6 +319,34 @@ export class EngineCore {
     this.#tw.skip();
   }
 
+  /** 演出链等待打字机完(行被顶替/已取消 → 立即放行,绝不挂死) */
+  waitForTypewriter(lineId: LineId): Promise<void> {
+    if (this.#currentLineId !== lineId) return Promise.resolve();
+    return new Promise((res) => {
+      let set = this.#twWaiters.get(lineId);
+      if (!set) {
+        set = new Set();
+        this.#twWaiters.set(lineId, set);
+      }
+      set.add(res);
+    });
+  }
+
+  #resolveTw(lineId: LineId): void {
+    const set = this.#twWaiters.get(lineId);
+    if (!set) return;
+    this.#twWaiters.delete(lineId);
+    for (const fn of set) fn();
+  }
+
+  /** 取消当前行打字机并放行全部等待者(打断/重放/停生成) */
+  cancelTypewriter(): void {
+    this.#tw.cancel();
+    const cur = this.#currentLineId;
+    this.#currentLineId = null;
+    if (cur) this.#resolveTw(cur);
+  }
+
   /** 舞台呈现快照(M5 存档用) */
   presentationSnapshot(): PresentationSnapshot {
     return this.stage.snapshot();
@@ -271,8 +355,11 @@ export class EngineCore {
   // ---- 内部 ----
 
   #present(lineId: LineId, text: string): void {
+    // 新行顶替旧行:旧行的等待者立即放行(演出链快速跟进)
+    if (this.#currentLineId && this.#currentLineId !== lineId) this.#resolveTw(this.#currentLineId);
     this.#currentLineId = lineId;
     void this.#tw.start(text).then(() => {
+      this.#resolveTw(lineId);
       if (this.#currentLineId === lineId) {
         this.bus.emit("typewriter:done", { lineId });
       }

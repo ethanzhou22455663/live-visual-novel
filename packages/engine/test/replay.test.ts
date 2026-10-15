@@ -13,6 +13,7 @@ const content: ContentPort = {
   bgmIds: new Set<string>(),
   defaultExprOf: (who) => (who === "enagi" ? "平常" : ""),
   emotionsOf: (who) => (who === "enagi" ? new Set(["平常", "笑"]) : new Set<string>()),
+  displayNameOf: (who) => (who === "enagi" ? "陽見恵凪" : who),
 };
 
 type StageCall = { op: string; args: unknown[] };

@@ -9,6 +9,7 @@ const content: ContentPort = {
   bgmIds: new Set<string>(),
   defaultExprOf: (who) => (who === "enagi" ? "平常" : ""),
   emotionsOf: (who) => (who === "enagi" ? new Set(["平常", "笑", "惊"]) : new Set<string>()),
+  displayNameOf: (who) => (who === "enagi" ? "陽見恵凪" : who),
 };
 
 function makeDeps(root: HTMLElement, warns: string[] = []): StageDeps {

@@ -36,3 +36,20 @@ export function mergeDelta(world: WorldState, delta: WorldDelta): WorldState {
   }
   return { affection, flags };
 }
+
+/**
+ * 两个增量合一条(选项自身 delta + hidden.delta 落同一条 ledger 条目,
+ * 使 foldWorld 单遍重放与"依次应用两增量"等价):affection 数值相加,flags last-wins。
+ */
+export function combineDeltas(a?: WorldDelta, b?: WorldDelta): WorldDelta | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  const affection: Record<string, number> = { ...a.affection };
+  for (const [k, v] of Object.entries(b.affection ?? {})) {
+    affection[k] = (affection[k] ?? 0) + v;
+  }
+  return {
+    affection: Object.keys(affection).length > 0 ? affection : undefined,
+    flags: { ...a.flags, ...b.flags },
+  };
+}

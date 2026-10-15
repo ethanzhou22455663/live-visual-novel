@@ -63,6 +63,8 @@ export interface GameEventMap {
     turnNo: number;
     error?: string;
   };
+  /** Tier-2 窥视文本(未提交行的半截):只进 ghost 区,绝不进状态/TTS */
+  "generation:preview": { text: string };
   /** 事务点:存档/TTS 入队/backlog 全挂这(replay 重放时不发,见 EngineCore.replay) */
   "line:commit": { event: ScriptEvent; lineId: LineId };
   "line:skip": { lineId: LineId };

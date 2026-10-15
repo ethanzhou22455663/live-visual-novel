@@ -10,4 +10,6 @@ export interface ContentPort {
   defaultExprOf(who: string): string;
   /** 该角色可用表情集合(空集=无立绘) */
   emotionsOf(who: string): ReadonlySet<string>;
+  /** 表示名(历史渲染/摘要);未知 id 返回 id 本身 */
+  displayNameOf(who: string): string;
 }

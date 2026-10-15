@@ -5,6 +5,8 @@ export * from "./core/EventBus.ts";
 export * from "./core/PresentationClock.ts";
 export * from "./core/EngineCore.ts";
 export * from "./core/KeyBindings.ts";
+export * from "./core/BeatRunner.ts";
+export * from "./audio/VoicePipeline.ts";
 export * from "./game/Backlog.ts";
 export * from "./presentation/ports.ts";
 export * from "./presentation/DomStagePort.ts";

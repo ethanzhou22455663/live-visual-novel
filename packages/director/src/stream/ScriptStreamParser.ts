@@ -9,8 +9,8 @@
  * Tier-2 窥视解析(peekPartialText):对未完整行做 "text":"..." 字段扫描,
  * 只喂打字机显示,绝不进状态/TTS(失败即丢弃无副作用)。
  */
-import { ScriptEventSchema } from "@gal/shared";
-import type { ScriptEvent } from "@gal/shared";
+import { ModelScriptEventSchema } from "@gal/shared";
+import type { ModelScriptEvent } from "@gal/shared";
 
 export class ParserAbortedError extends Error {
   constructor(reason: string) {
@@ -71,12 +71,12 @@ export class ScriptStreamParser {
   }
 
   /** 喂入一段流式文本,返回本次新提交的事件 */
-  push(chunk: string): ScriptEvent[] {
+  push(chunk: string): ModelScriptEvent[] {
     if (this.aborted) return [];
     this.tail += chunk;
     const lines = this.tail.split("\n");
     this.tail = lines.pop() ?? ""; // 最后一段可能是半行,留待下次
-    const events: ScriptEvent[] = [];
+    const events: ModelScriptEvent[] = [];
     for (const line of lines) {
       const ev = this.#feedLine(line.replace(/\r$/, ""));
       if (ev) events.push(ev);
@@ -86,7 +86,7 @@ export class ScriptStreamParser {
   }
 
   /** 流正常结束:提交残余(仅当它是完整行) */
-  end(): ScriptEvent[] {
+  end(): ModelScriptEvent[] {
     if (this.aborted || !this.tail.trim()) {
       this.tail = "";
       return [];
@@ -115,7 +115,7 @@ export class ScriptStreamParser {
     return undefined as never;
   }
 
-  #feedLine(line: string): ScriptEvent | undefined {
+  #feedLine(line: string): ModelScriptEvent | undefined {
     const trimmed = line.trim();
     if (!trimmed) return undefined;
 
@@ -160,16 +160,16 @@ export class ScriptStreamParser {
     }
   }
 
-  #parseAndValidate(line: string): ScriptEvent | undefined {
+  #parseAndValidate(line: string): ModelScriptEvent | undefined {
     // JSON 解析失败原样抛出:是否可修复(括号未平衡)由 #feedLine 裁决
     const obj: unknown = JSON.parse(line);
-    const parsed = ScriptEventSchema.safeParse(obj);
+    const parsed = ModelScriptEventSchema.safeParse(obj);
     if (!parsed.success) {
       this.#fail(line, parsed.error.message);
       return undefined;
     }
     this.consecutiveErrors = 0; // 好行重置错误计数
-    return parsed.data as ScriptEvent;
+    return parsed.data as ModelScriptEvent;
   }
 }
 

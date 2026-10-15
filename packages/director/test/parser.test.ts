@@ -79,11 +79,11 @@ describe("ScriptStreamParser", () => {
     expect(p.push(`行"}\n${SAY1}\n`)).toHaveLength(0);
   });
 
-  it("turnNo=0 合法(nonnegative);负数按错误计(不越过 3 次不中止)", () => {
+  it("模型面无 turnNo:违规输出被 zod strip,行照常通过(§1.1 容错)", () => {
     const p = new ScriptStreamParser();
-    expect(feedAll(p, '{"t":"narrate","turnNo":0,"text":"零号もOK"}\n')).toHaveLength(1);
-    const strict = new ScriptStreamParser({ maxConsecutiveErrors: 1 });
-    expect(() => feedAll(strict, '{"t":"narrate","turnNo":-1,"text":"x"}\n')).toThrow(ParserAbortedError);
+    const evs = feedAll(p, '{"t":"narrate","turnNo":-1,"text":"零号もOK"}\n');
+    expect(evs).toHaveLength(1);
+    expect(evs[0]).toEqual({ t: "narrate", text: "零号もOK" }); // turnNo 被剥离
   });
 });
 

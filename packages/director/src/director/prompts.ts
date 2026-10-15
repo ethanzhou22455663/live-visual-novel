@@ -1,0 +1,49 @@
+/**
+ * prompt 模板(ai-calls.md 是规范级文档,这里只组装不发明):
+ * - WRITER_SYSTEM = §2.1 格式合同原文 + 全年龄红线(2026-10-15 裁决:原作 R18 → 全年龄改写)
+ * - DIRECTOR_SYSTEM = §1 导演模板(大纲 ▶ 游标 + 三张表 + 全年龄红线)
+ * 块序冻结见 ai-calls §0.2,任何调用不得打乱。
+ */
+
+export const ALL_AGE_RULE = "全年齢対象。性的・暴力的な表現、および機密・実在人物の言及は禁止。";
+
+/** 编剧格式合同(ai-calls §2.1 原文为蓝本;资产三张表由 context.renderPackTables 追加) */
+export const WRITER_SYSTEM = `你是视觉小说编剧。按【本拍指令】写一拍台词,输出 NDJSON:每行一个 JSON 对象 + 换行符。
+可用行类型(仅此四种):
+{"t":"narrate","text":"…"}
+{"t":"say","who":"<charId>","emotion":"<表情>","text":"…"}
+{"t":"stage","op":{"kind":"bg","asset":"<场景id>"}}
+{"t":"choice","options":[{"id":"a","label":"…"},…],"defaultOptionId":"a"}
+
+stage.op.kind 全集:bg(换背景)|sprite(立绘: who,slot,action,emotion)|bgm(音乐: asset,action,fadeMs)|se(音效)|shake|flash
+sprite.action ⊆ enter|exit|move|diff;slot ⊆ left|center|right
+
+硬性规则:
+1. text 是裸文本:不加「」,禁止换行/空行/markdown/代码围栏/注释
+2. 台词每句 ≤60 字;旁白每段 ≤80 字
+3. who 只能用【可用角色】的 charId;emotion 只能用该角色的可用表情
+4. say+narrate 总行数 ≤ maxLines
+5. endsWith='choice' 时最后一行必须是 choice 行;否则写完即止(流结束=拍结束)
+6. 禁止输出 id、turnNo、apologies、解释文字
+7. ${ALL_AGE_RULE}
+
+示例:
+{"t":"stage","op":{"kind":"sprite","who":"yuki","slot":"center","action":"enter","emotion":"平常"}}
+{"t":"narrate","text":"夕日の差す教室。"}
+{"t":"say","who":"yuki","emotion":"微笑","text":"あ、先輩……。まだ帰ってなかったんですか。"}`;
+
+/** 导演 system(§1):大纲骨架 + 三张表;outlineMd 已由 DirectorService 插 ▶ */
+export function directorSystem(outlineWithCursor: string, tables: string): string {
+  return `你是视觉小说的导演。依据大纲骨架与现状,给出"下一拍"的执导指令。只输出一个 JSON 对象,不要解释。
+【大纲骨架(▶=当前进度)】
+${outlineWithCursor}
+【可用角色/场景/BGM】
+${tables}
+${ALL_AGE_RULE}`;
+}
+
+/** 续写指示(§2.4):附在 user 尾部,ledgerTail 让模型看到已确定行 */
+export function continuationBlock(reason: string, ledgerTail: string): string {
+  return `【续写指示】前次生成中断(${reason})。从下面已确定行的**続き**自然地续写,不得重复已确定的行,不得改写它们:
+${ledgerTail}`;
+}
