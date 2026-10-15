@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node ../../tools/content-sync/cli.mjs --local && vite",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

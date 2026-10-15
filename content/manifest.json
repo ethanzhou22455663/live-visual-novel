@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "characters": {
+    "example-char": {
+      "id": "example-char",
+      "displayName": "サンプル",
+      "color": "#9aa7b0",
+      "defaultExpr": "平常",
+      "sprites": {},
+      "cardMd": "\n# サンプル(占位キャラクター)\n\n替换本目录为你的角色:`content/characters/<charId>/`,charId 仅限 `[a-z0-9_-]`。\n\n- frontmatter:name(表示名)/ color(个人色 #rrggbb)/ defaultExpr(默认表情,须是 sprites 文件名之一)\n- 正文:角色性格设定原文,会整段注入导演/编剧 prompt\n- 立绘:往本目录丢图片即成表情(文件名=表情名,如 `平常.png`/`微笑.png`)\n- 语音(可选):`voice/ref.wav` + `voice/voice.json`\n\n本仓库的 OSS 占位包不含任何第三方 IP 素材;本地测试包放 `content-local/`(gitignored)。\n"
+    }
+  },
+  "scenes": {},
+  "bgm": {},
+  "story": {
+    "outlineMd": "<!-- 大纲骨架(P1 约定:以 `- ` 开头的行 = 一拍,导演按序取用;▶ 游标由引擎持久化) -->\n\n# 大纲(占位)\n\n- 序章:主人公与命运的相遇\n- 日常:初次共同作业,相互摸底\n- 事件:突发状况考验关系\n- 高潮:决意与收束\n",
+    "worldBook": [
+      {
+        "id": "1-示例世界",
+        "keys": [
+          "示例",
+          "世界的扉"
+        ],
+        "content": "这是一个占位条目:把这里换成你的世界设定(地名/组织/规则/梗)。\n扫描窗口=最近 12 条已提交文本+玩家最近选择+本拍指令;按 priority 降序、最长关键词优先,预算默认 600 token。",
+        "priority": 5,
+        "enabled": true
+      }
+    ]
+  }
+}

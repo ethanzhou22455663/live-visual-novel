@@ -6,6 +6,12 @@
 /assets/
 mock/assets/*
 !mock/assets/README.md
+# IP 派生文案与 manifest(本地测试包)
+/content-local/
+/content/manifest.local.json
+# 派生资产副本(vite 公共目录,构建产物性质)
+/packages/app/public/local/
+/packages/app/public/content/
 
 # ---- 密钥（API key 永远不入库） ----
 .env

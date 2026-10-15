@@ -5,7 +5,7 @@
 import { z } from "zod";
 
 /** 事件文本禁止裸换行(NDJSON 行完整性;换行会破坏行分隔) */
-const noRawNewline = (s: string) => !s.includes("\n") && !s.includes("\r");
+export const noRawNewline = (s: string) => !s.includes("\n") && !s.includes("\r");
 
 export const SayEventSchema = z.object({
   t: z.literal("say"),
@@ -24,7 +24,7 @@ export const NarrateEventSchema = z.object({
 const TransitionSchema = z.enum(["fade", "cut", "slide"]);
 const SlotSchema = z.enum(["left", "center", "right"]);
 
-const StageOpSchema = z.discriminatedUnion("kind", [
+export const StageOpSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("bg"), asset: z.string().min(1), transition: TransitionSchema.optional() }),
   z.object({
     kind: z.literal("sprite"),

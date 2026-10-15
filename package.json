@@ -9,6 +9,7 @@
     "e2e:p0": "node tools/p0-e2e.mjs"
   },
   "devDependencies": {
+    "gray-matter": "^4.0.3",
     "turbo": "^2.11.7"
   }
 }
