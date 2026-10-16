@@ -70,6 +70,9 @@ export interface EngineCoreDeps {
   skipAutoPick?: boolean;
   /** 每秒字数(设置面板 M6 可调;默认同 P0) */
   cps?: number;
+  /** BGM 指令出口(bootstrap 接 AudioBus;null=stop);不设 = 无声玩法(headless) */
+  onBgm?: (assetId: string | null, fadeMs?: number) => void;
+  onSe?: (assetId: string) => void;
 }
 
 export class EngineCore {
@@ -93,12 +96,16 @@ export class EngineCore {
   #currentLine: { who: string; emotion: string } | null = null;
   #skipAutoPick: boolean;
   #choiceOverlay: ChoiceOverlay | null = null;
+  #onBgm: ((assetId: string | null, fadeMs?: number) => void) | null;
+  #onSe: ((assetId: string) => void) | null;
 
   constructor(deps: EngineCoreDeps) {
     this.bus = deps.bus;
     this.clock = deps.clock;
     this.stage = deps.stage;
     this.content = deps.content;
+    this.#onBgm = deps.onBgm ?? null;
+    this.#onSe = deps.onSe ?? null;
     this.#skipAutoPick = deps.skipAutoPick ?? true;
     this.#tw = new Typewriter(deps.textEl, { cps: deps.cps ?? 30 });
     this.#tw.onProgress = (ratio) => {
@@ -522,8 +529,13 @@ export class EngineCore {
         if (!replay) this.stage.flash();
         break;
       case "bgm":
+        // replay 跳过:读档走 presentation.bgm 权威恢复(bootstrap),避免重触发淡入
+        if (replay) break;
+        if (op.action === "stop") this.#onBgm?.(null);
+        else this.#onBgm?.(op.asset ?? null, op.fadeMs);
+        break;
       case "se":
-        // M6 接线 AudioBus;ledger 里先忠实记录
+        if (!replay) this.#onSe?.(op.asset);
         break;
     }
   }

@@ -19,6 +19,7 @@ stage.op.kind 全集:bg(换背景)|sprite(立绘: who,slot,action,emotion)|bgm(�
 sprite.action ⊆ enter|exit|move|diff;slot ⊆ left|center|right
 
 硬性规则:
+0. すべての text・label は日本語で書く(自然な口語;中国語/英語混じり禁止)
 1. text 是裸文本:不加「」,禁止换行/空行/markdown/代码围栏/注释
 2. 台词每句 ≤60 字;旁白每段 ≤80 字
 3. who 只能用【可用角色】的 charId;emotion 只能用该角色的可用表情
@@ -32,9 +33,13 @@ sprite.action ⊆ enter|exit|move|diff;slot ⊆ left|center|right
 {"t":"narrate","text":"夕日の差す教室。"}
 {"t":"say","who":"yuki","emotion":"微笑","text":"あ、先輩……。まだ帰ってなかったんですか。"}`;
 
-/** 导演 system(§1):大纲骨架 + 三张表;outlineMd 已由 DirectorService 插 ▶ */
+/** 导演 system(§1):输出格式合同 + 大纲骨架 + 三张表;outlineMd 已由 DirectorService 插 ▶ */
 export function directorSystem(outlineWithCursor: string, tables: string): string {
   return `你是视觉小说的导演。依据大纲骨架与现状,给出"下一拍"的执导指令。只输出一个 JSON 对象,不要解释。
+格式(仅此五个键,一律必填):
+{"scene":{"bg":"<场景id>","bgm":"<BGM id 或 null>","cast":["<charId>","<charId>"]},"goal":"<本拍目标,日语一句话>","endsWith":"beatEnd|choice|sceneEnd","maxLines":<6〜14的整数>,"toneHint":"<可选:氛围一句话,日语>"}
+- bg/cast/bgm 的 id 只能取自【可用角色/场景/BGM】表;cast 1〜3 人
+- endsWith:日常一拍收束=beatEnd;本拍要玩家做选择=choice(此时编剧最后会写选项);场景收尾=sceneEnd
 【大纲骨架(▶=当前进度)】
 ${outlineWithCursor}
 【可用角色/场景/BGM】

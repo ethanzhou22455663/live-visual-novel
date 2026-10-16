@@ -17,6 +17,15 @@ export interface GptSovitsEndpoint {
   speed?: number;
 }
 
+/** per-char ref 覆盖(P1 裁决7:三角色共用 assets/2 供体,P2 voice-trainer 分化) */
+export interface GptSovitsRef {
+  refAudioPath: string;
+  promptText: string;
+  promptLang?: string;
+  textLang?: string;
+}
+export type GptSovitsRefs = Record<string, GptSovitsRef>;
+
 /** WAV 头解析(取时长算 RTF/进度);流式响应的 data 长度可能为 0/0xFFFFFFFF,以实收为准 */
 export function wavInfo(buf: ArrayBuffer): { durationSec: number; sampleRate: number } | null {
   const view = new DataView(buf);
@@ -55,25 +64,37 @@ export function wavInfo(buf: ArrayBuffer): { durationSec: number; sampleRate: nu
 export class GptSovitsProvider implements TtsProvider {
   readonly id = "gpt-sovits";
   private ep: GptSovitsEndpoint;
+  private refs: GptSovitsRefs;
+  private defaultRefId: string | null;
 
-  constructor(ep: GptSovitsEndpoint) {
+  constructor(ep: GptSovitsEndpoint, refs: GptSovitsRefs = {}, defaultRefId: string | null = null) {
     this.ep = ep;
+    this.refs = refs;
+    this.defaultRefId = defaultRefId;
   }
 
   updateEndpoint(ep: Partial<GptSovitsEndpoint>): void {
     this.ep = { ...this.ep, ...ep };
   }
 
+  /** 合成时选 ref:请求角色 → defaultRefId → 构造时的 endpoint 兜底 */
+  #refFor(configId: string): GptSovitsEndpoint {
+    const r = this.refs[configId] ?? (this.defaultRefId ? this.refs[this.defaultRefId] : undefined);
+    if (!r) return this.ep;
+    return { ...this.ep, refAudioPath: r.refAudioPath, promptText: r.promptText, promptLang: r.promptLang, textLang: r.textLang };
+  }
+
   async synthesize(req: SynthRequest): Promise<ReadyClip> {
-    const res = await fetch(`${this.ep.baseUrl}/tts`, {
+    const ep = this.#refFor(req.configId);
+    const res = await fetch(`${ep.baseUrl}/tts`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         text: req.text,
-        text_lang: this.ep.textLang ?? "ja",
-        ref_audio_path: this.ep.refAudioPath,
-        prompt_text: this.ep.promptText,
-        prompt_lang: this.ep.promptLang ?? "ja",
+        text_lang: ep.textLang ?? "ja",
+        ref_audio_path: ep.refAudioPath,
+        prompt_text: ep.promptText,
+        prompt_lang: ep.promptLang ?? "ja",
         text_split_method: "cut0",
         media_type: "wav",
         streaming_mode: 0,

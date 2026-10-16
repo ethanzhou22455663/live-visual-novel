@@ -1,6 +1,6 @@
 /**
  * BeatRunner(plan §1.4 主循环)合同测试:
- * - FakeStoryService 脚本化:lineId 分配、status 序列、大纲游标推进
+ * - FakeStoryService 脚本化(beatRunnerHarness 共享):lineId 分配、status 序列、大纲游标推进
  * - choice 停等 → resolveChoice → world 折叠(自身+hidden 合一,clamp)→ 循环继续
  * - sceneEnd → summarize(names/throughLineId)
  * - aborted(canContinue) → 同拍再入:continuation + ledgerTail
@@ -8,101 +8,14 @@
  * 终止姿势:脚本尾部放一个"挂到 signal abort"的 pad 拍,stopGeneration 确定性地停下循环。
  */
 import { describe, expect, it, vi } from "vitest";
-import type {
-  BeatDirective,
-  ContentPort,
-  GenerateBeatRequest,
-  NextBeatRequest,
-  StoryChunk,
-  SummarizeRequest,
-  Summary,
-} from "@gal/shared";
+import type { StoryChunk } from "@gal/shared";
 import { BeatRunner } from "../src/core/BeatRunner.ts";
 import { EngineCore } from "../src/core/EngineCore.ts";
 import { EventBus } from "../src/core/EventBus.ts";
 import { PresentationClock } from "../src/core/PresentationClock.ts";
-import type { SpriteOp, StagePort } from "../src/presentation/ports.ts";
+import { content, DIRECTIVE, fakeStage, fakeStory, pad, type ScriptEntry } from "./beatRunnerHarness.ts";
 
-const content: ContentPort = {
-  characterIds: new Set(["enagi", "yukitaka"]),
-  sceneIds: new Set(["classroom"]),
-  bgmIds: new Set<string>(),
-  defaultExprOf: (who) => (who === "enagi" ? "平常" : ""),
-  emotionsOf: (who) => (who === "enagi" ? new Set(["平常", "笑"]) : new Set<string>()),
-  displayNameOf: (who) => (who === "enagi" ? "陽見恵凪" : who),
-};
-
-function fakeStage(): StagePort {
-  return {
-    bg: () => {},
-    sprite: (_o: SpriteOp) => {},
-    speak: () => {},
-    shake: () => {},
-    flash: () => {},
-    reset: () => {},
-    snapshot: () => ({ bg: null, bgm: null, sprites: {} }),
-    restore: () => {},
-  };
-}
-
-const DIRECTIVE: BeatDirective = {
-  scene: { bg: "classroom", bgm: null, cast: ["enagi"] },
-  goal: "再会",
-  endsWith: "beatEnd",
-  maxLines: 6,
-};
-
-type Chunks = StoryChunk[] | ((req: GenerateBeatRequest) => AsyncGenerator<StoryChunk, void, unknown> | StoryChunk[]);
-
-interface ScriptEntry {
-  directive?: BeatDirective;
-  chunks?: Chunks;
-  /** 垫拍:nextBeat 挂到 signal abort(此时 directing/writing 还没发,status 序列确定) */
-  hang?: boolean;
-}
-
-/** 挂到 abort 的垫拍:让循环停在 nextBeat 里,stopGeneration 确定性收尾 */
-const pad = (): ScriptEntry => ({ hang: true });
-
-function fakeStory(script: ScriptEntry[], cannedSummary?: Summary) {
-  const nextCalls: NextBeatRequest[] = [];
-  const genReqs: GenerateBeatRequest[] = [];
-  const summarizeCalls: SummarizeRequest[] = [];
-  let i = 0;
-  return {
-    nextCalls,
-    genReqs,
-    summarizeCalls,
-    async nextBeat(req: NextBeatRequest): Promise<BeatDirective> {
-      nextCalls.push(req);
-      const entry = script[i];
-      if (entry?.hang) {
-        const sig = req.signal;
-        if (sig && !sig.aborted) {
-          await new Promise<void>((resolve) => sig.addEventListener("abort", () => resolve(), { once: true }));
-        }
-      }
-      return entry?.directive ?? DIRECTIVE;
-    },
-    async *generateBeat(req: GenerateBeatRequest): AsyncGenerator<StoryChunk, void, unknown> {
-      genReqs.push(req);
-      const entry = script[i];
-      i++;
-      if (!entry) {
-        yield { kind: "aborted", reason: "script exhausted", canContinue: false };
-        return;
-      }
-      const chunks = typeof entry.chunks === "function" ? entry.chunks(req) : entry.chunks;
-      yield* chunks;
-    },
-    async summarize(req: SummarizeRequest): Promise<Summary> {
-      summarizeCalls.push(req);
-      return cannedSummary ?? { facts: "要約済み", charUpdates: {}, threads: [], summarizedThroughLineId: req.throughLineId };
-    },
-  };
-}
-
-function makeRunner(script: ScriptEntry[], cannedSummary?: Summary) {
+function makeRunner(script: ScriptEntry[], cannedSummary?: import("@gal/shared").Summary) {
   const bus = new EventBus();
   const engine = new EngineCore({
     bus,

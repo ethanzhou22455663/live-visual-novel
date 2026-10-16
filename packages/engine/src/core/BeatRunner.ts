@@ -245,10 +245,16 @@ export class BeatRunner {
   async #presentSay(lineId: string, entries: ReturnType<VoicePipeline["enqueue"]>, signal: AbortSignal): Promise<void> {
     const { engine, voice } = this.#deps;
     if (!voice) return;
+    const mode = engine.clock.mode;
+    // 坑③:skip/fast 演出直通——瞬间补完打字机、不等语音;commit/fold 已照常入账
+    if (mode === "skip" || mode === "fast") {
+      engine.advance();
+      return;
+    }
     try {
       await engine.waitForTypewriter(lineId);
       await voice.playOut(entries, signal);
-      await voice.dwell(400);
+      await voice.dwell(mode === "auto" ? 800 : 400);
     } catch (e) {
       this.#deps.onError?.(e);
     }
@@ -256,11 +262,15 @@ export class BeatRunner {
 
   async #presentNarrate(lineId: string, signal: AbortSignal): Promise<void> {
     const { engine, voice } = this.#deps;
+    const mode = engine.clock.mode;
+    if (mode === "skip" || mode === "fast") {
+      engine.advance();
+      return;
+    }
     if (!voice || signal.aborted) return;
     try {
       await engine.waitForTypewriter(lineId);
-      await voice.dwell(400);
-      void signal;
+      await voice.dwell(mode === "auto" ? 800 : 400);
     } catch (e) {
       this.#deps.onError?.(e);
     }

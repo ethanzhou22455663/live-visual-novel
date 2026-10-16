@@ -20,8 +20,10 @@ import type { StageDeps, StagePort } from "@gal/engine";
 import { DeepseekClient, createStoryService, outlineBeatCount, parseContentPack } from "@gal/director";
 import type { ContentPack, ContentPort, EnqueueLineRequest, ReadyClip, SaveData, VoiceSynthPort } from "@gal/shared";
 import { splitSentences } from "@gal/shared";
-import { GptSovitsProvider, SynthQueue } from "@gal/tts-bridge";
+import { GptSovitsProvider, SilentProvider, SynthQueue, TtsRouter } from "@gal/tts-bridge";
+import type { GptSovitsRefs } from "@gal/tts-bridge";
 import { LocalStorageAdapter } from "./storage/LocalStorageAdapter.ts";
+import { applySettings, loadSettings } from "./state/settings.ts";
 
 export interface Assembled {
   pack: ContentPack;
@@ -145,10 +147,18 @@ async function assemble(): Promise<Assembled> {
   fit();
   window.addEventListener("resize", fit);
 
+  // ---- 音频总线(bgm/se 出口要被 EngineCore 引用,先于 engine 建立坑#16:解锁仍归手势) ----
+  const audio = new AudioBus();
+
   // ---- 引擎核心 ----
   const bus = new EventBus();
   const clock = new PresentationClock();
   clock.start();
+  audio.onError = (m) => {
+    warnings.push(m);
+    bus.emit("engine:warning", { message: m });
+    console.warn("[audio]", m);
+  };
   const engine = new EngineCore({
     bus,
     clock,
@@ -158,6 +168,35 @@ async function assemble(): Promise<Assembled> {
     choiceRoot: holder, // 选项浮层挂舞台内(engine DOM;React 不再画选项)
     skipAutoPick: true, // skip 模式自动选默认项
     cps: 28,
+    // stage bgm/se 指令 → AudioBus;assetId→URL 查 pack.bgm 表(未知 id 告警不拦)
+    onBgm: (assetId, fadeMs) => {
+      if (assetId === null) {
+        audio.stopBgm(fadeMs ?? 800);
+        return;
+      }
+      const track = pack.bgm[assetId];
+      if (!track) {
+        warnings.push(`未知 BGM「${assetId}」`);
+        console.warn("[audio]", `未知 BGM「${assetId}」`);
+        return;
+      }
+      void audio.playBgm(assetId, track.path, fadeMs);
+    },
+    onSe: (assetId) => {
+      const track = pack.bgm[assetId];
+      if (!track) {
+        warnings.push(`未知 SE「${assetId}」`);
+        console.warn("[audio]", `未知 SE「${assetId}」`);
+        return;
+      }
+      void audio.playSe(assetId, track.path);
+    },
+  });
+
+  // 语音播放中压低 BGM(ducking):voice:state 驱动(每句 playing→on / done|failed|muted→off)
+  bus.on("voice:state", ({ state }) => {
+    if (state === "playing") audio.duckBgm(true);
+    else if (state === "done" || state === "failed" || state === "muted") audio.duckBgm(false);
   });
 
   // 名牌随提交行更新(commit 事务点;replay 不发 line:commit,M5 读档后补同步)
@@ -173,17 +212,42 @@ async function assemble(): Promise<Assembled> {
     }
   });
 
-  // ---- 语音(裁决7):manifest 带 voice(本地包)才装配真 TTS;供体 = assets/2 ----
+  // ---- 语音(M6 降级链):[GPT-SoVITS(per-char ref) → SilentProvider] ----
+  // 裁决7:三角色暂共用 assets/2 供体(defaultRefId),manifest per-char 覆盖即生效;
+  // 降级永久不回切(演出中声线不变),onDegraded 转 voice:state + warnings 可见化。
   const voiceChar = Object.values(pack.characters).find((c) => c.voice);
   let synth: VoiceSynthPort | null = null;
   if (voiceChar?.voice) {
-    const provider = new GptSovitsProvider({
-      baseUrl: "", // Provider 自拼 "/tts" → Vite proxy 1:1 转发 9880("/tts/tts" 是 404 陷阱)
-      refAudioPath: voiceChar.voice.refAudioPathServer,
-      promptText: voiceChar.voice.promptText,
-      promptLang: voiceChar.voice.promptLang,
+    const refs: GptSovitsRefs = {};
+    for (const [id, c] of Object.entries(pack.characters)) {
+      if (c.voice) {
+        refs[id] = {
+          refAudioPath: c.voice.refAudioPathServer,
+          promptText: c.voice.promptText,
+          promptLang: c.voice.promptLang,
+        };
+      }
+    }
+    const gptsovits = new GptSovitsProvider(
+      {
+        baseUrl: "", // Provider 自拼 "/tts" → Vite proxy 1:1 转发 9880("/tts/tts" 是 404 陷阱)
+        refAudioPath: voiceChar.voice.refAudioPathServer,
+        promptText: voiceChar.voice.promptText,
+        promptLang: voiceChar.voice.promptLang,
+      },
+      refs,
+      voiceChar.id, // defaultRefId
+    );
+    const router = new TtsRouter({
+      providers: [gptsovits, new SilentProvider()],
+      onDegraded: (from, to) => {
+        const m = `TTS 降級:${from} → ${to ?? "なし"}(再起動まで復帰しません)`;
+        warnings.push(m);
+        bus.emit("voice:state", { lineId: "router", state: to === "silent" ? "muted" : "failed" });
+        console.warn("[tts]", m);
+      },
     });
-    synth = new AppVoiceSynth(new SynthQueue(provider));
+    synth = new AppVoiceSynth(new SynthQueue(router));
   }
 
   // ---- 导演/编剧/摘要(同一条 LLM 连接) ----
@@ -199,7 +263,6 @@ async function assemble(): Promise<Assembled> {
     },
   });
 
-  const audio = new AudioBus();
   let runner: BeatRunner | null = null;
   const ensureRunner = (): BeatRunner => {
     runner ??= new BeatRunner({
@@ -237,6 +300,9 @@ async function assemble(): Promise<Assembled> {
   };
 
   const saves = new SaveSystem({ engine, bus, storage: new LocalStorageAdapter(), getRunner: () => runner });
+
+  // 设置初载(M6):字速/音量/语言,重启保留(App 的 lang 初始值同源读取)
+  applySettings({ engine, audio }, loadSettings());
 
   /** 读档共用:恢复引擎+runner → 名牌同步 → 起循环(旧循环若在,先让出一个宏任务) */
   const resumeAndRun = async (save: SaveData): Promise<void> => {

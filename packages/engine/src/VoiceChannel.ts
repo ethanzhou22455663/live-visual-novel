@@ -23,6 +23,12 @@ export class VoiceChannel {
   play(clip: ReadyClip): Promise<void> {
     const run = async (prev: Promise<unknown>): Promise<void> => {
       await prev.catch(() => {});
+      // SilentProvider 空音频(M6):不开 source,按估时定时等待——
+      // 语音时序(auto 推进/演出链)不因缺 TTS 而坏;串行链照常保序
+      if (clip.audio.byteLength === 0) {
+        await new Promise<void>((r) => setTimeout(r, Math.max(0, clip.durationSec * 1000)));
+        return;
+      }
       const buffer = await this.#decode(clip);
       return new Promise<void>((resolve) => {
         const src = this.ctx.createBufferSource();

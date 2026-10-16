@@ -1,14 +1,22 @@
 /**
- * 最小 play 壳(M3→M5):舞台/台词窗/选项浮层都是原生 DOM(bootstrap+engine),
- * React 只做 chrome——标题画面(スタート/つづきから)、HUD(状态/菜单/存读)、
- * preview/警告。面板(设置/backlog/键位)M6。
+ * play 壳(M3→M6):舞台/台词窗/选项浮层都是原生 DOM(bootstrap+engine),
+ * React 只做 chrome——标题、HUD、面板(存读/设置/历史)、preview/警告。
+ * M6:KeyBindings(Enter/Space、Ctrl fast、↑/滚轮 backlog、Esc)、i18n(ja/zh)、
+ * 设置面板(字速/音量/语言,global 持久化)。
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { KeyBindings } from "@gal/engine";
 import type { EngineSnapshot } from "@gal/engine";
-import type { SaveData } from "@gal/shared";
+import type { ClockMode, SaveData } from "@gal/shared";
 import { getAssembled } from "./bootstrap.ts";
 import type { Assembled } from "./bootstrap.ts";
+import { loadSettings, saveSettings } from "./state/settings.ts";
+import { t, type Lang } from "./i18n/strings.ts";
 import { SaveLoadPanel } from "./ui/SaveLoadPanel.tsx";
+import { SettingsPanel } from "./ui/SettingsPanel.tsx";
+import { BacklogPanel } from "./ui/BacklogPanel.tsx";
+
+type PanelMode = "save" | "load" | "settings" | "backlog";
 
 export function App() {
   const [asm, setAsm] = useState<Assembled | null>(null);
@@ -18,8 +26,12 @@ export function App() {
   const [status, setStatus] = useState("");
   const [warning, setWarning] = useState("");
   const [voiceFail, setVoiceFail] = useState(0);
-  const [panel, setPanel] = useState<"save" | "load" | null>(null);
+  const [panel, setPanel] = useState<PanelMode | null>(null);
   const [autoSave, setAutoSave] = useState<SaveData | null>(null);
+  const [lang, setLang] = useState<Lang>(() => loadSettings().lang); // 与 bootstrap 初载同源
+  const kbRef = useRef<KeyBindings | null>(null);
+  const prevMode = useRef<ClockMode>("normal");
+  const tr = t(lang);
 
   useEffect(() => {
     let alive = true;
@@ -56,32 +68,67 @@ export function App() {
     };
   }, [asm]);
 
+  // 键位(M6):面板开时进入"仅 Esc"模式(由 panel 副作用同步)
+  useEffect(() => {
+    if (!asm) return;
+    const kb = new KeyBindings({
+      advance: () => asm.engine.advance(),
+      setFast: (on) => {
+        const clock = asm.engine.clock;
+        if (on) {
+          if (clock.mode !== "fast") prevMode.current = clock.mode;
+          clock.setMode("fast");
+        } else {
+          clock.setMode(prevMode.current === "fast" ? "normal" : prevMode.current);
+        }
+      },
+      toggleBacklog: () => setPanel((p) => (p === "backlog" ? null : "backlog")),
+      togglePause: () => setPanel((p) => (p === "settings" ? null : "settings")),
+      closePanel: () => setPanel(null),
+    });
+    kb.attach();
+    kbRef.current = kb;
+    return () => {
+      kb.detach();
+      kbRef.current = null;
+    };
+  }, [asm]);
+
+  useEffect(() => {
+    kbRef.current?.setPanelOpen(panel !== null);
+  }, [panel, asm]);
+
+  const changeLang = (l: Lang): void => {
+    setLang(l);
+    saveSettings({ ...loadSettings(), lang: l }); // 面板内 update() 只在点字速/音量时写盘,语言单独落
+  };
+
   if (fatal) {
     return (
       <div className="chrome fatal">
-        <h1>起動に失敗しました</h1>
+        <h1>{tr.fatal}</h1>
         <p>{fatal}</p>
       </div>
     );
   }
   if (!asm || !snap) {
-    return <div className="chrome loading">読み込み中…</div>;
+    return <div className="chrome loading">{tr.loading}</div>;
   }
 
   if (snap.phase === "title") {
     return (
       <div className="chrome title-screen">
-        <h1 className="game-title">レモネード・ファクトリー</h1>
-        <p className="game-sub">AI 実時生成ノベル — P1</p>
+        <h1 className="game-title">{tr.title}</h1>
+        <p className="game-sub">{tr.subtitle}</p>
         <button type="button" className="start-btn" onClick={() => asm.start()}>
-          スタート
+          {tr.start}
         </button>
         {autoSave && (
           <button type="button" className="start-btn sub" onClick={() => void asm.startFromSave(autoSave)}>
-            つづきから
+            {tr.resume}
           </button>
         )}
-        <p className="title-note">DeepSeek proxy(/llm)と GPT-SoVITS(:9880)が稼働中であること</p>
+        <p className="title-note">{tr.titleNote}</p>
       </div>
     );
   }
@@ -105,21 +152,30 @@ export function App() {
             ⚠
           </span>
         )}
-        {voiceFail > 0 && <span className="chip warn">音声失敗×{voiceFail}</span>}
+        {voiceFail > 0 && <span className="chip warn">{tr.voiceFail(voiceFail)}</span>}
         <button type="button" className="chip btn" onClick={() => setPanel("save")}>
-          セーブ
+          {tr.save}
         </button>
         <button type="button" className="chip btn" onClick={() => setPanel("load")}>
-          ロード
+          {tr.load}
+        </button>
+        <button type="button" className="chip btn" onClick={() => setPanel("backlog")}>
+          {tr.backlog}
+        </button>
+        <button type="button" className="chip btn" onClick={() => setPanel("settings")}>
+          {tr.settings}
         </button>
         {asm.runner?.running && (
           <button type="button" className="chip btn" onClick={() => asm.stop()}>
-            ■ 停止
+            {tr.stop}
           </button>
         )}
       </div>
 
-      {panel !== null && <SaveLoadPanel asm={asm} mode={panel} onClose={() => setPanel(null)} />}
+      {panel === "save" && <SaveLoadPanel asm={asm} lang={lang} mode="save" onClose={() => setPanel(null)} />}
+      {panel === "load" && <SaveLoadPanel asm={asm} lang={lang} mode="load" onClose={() => setPanel(null)} />}
+      {panel === "settings" && <SettingsPanel asm={asm} lang={lang} onLang={changeLang} onClose={() => setPanel(null)} />}
+      {panel === "backlog" && <BacklogPanel asm={asm} lang={lang} onClose={() => setPanel(null)} />}
     </>
   );
 }

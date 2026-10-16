@@ -61,12 +61,22 @@ export class KeyBindings {
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.key === "Control") this.#actions.setFast(false);
     };
+    // 滚轮向上 = backlog(M6;window 级 wheel 默认 passive,preventDefault 需显式声明)
+    const onWheel = (e: WheelEvent) => {
+      if (this.#panelOpen) return;
+      if (e.deltaY < 0) {
+        e.preventDefault();
+        this.#actions.toggleBacklog();
+      }
+    };
     const host = target as EventTarget;
     host.addEventListener("keydown", onKey as EventListener);
     host.addEventListener("keyup", onKeyUp as EventListener);
+    host.addEventListener("wheel", onWheel as EventListener, { passive: false });
     this.#detach = () => {
       host.removeEventListener("keydown", onKey as EventListener);
       host.removeEventListener("keyup", onKeyUp as EventListener);
+      host.removeEventListener("wheel", onWheel as EventListener);
     };
   }
 

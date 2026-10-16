@@ -81,6 +81,11 @@ export class Typewriter {
     this.skipping = true;
   }
 
+  /** 设置每秒字数(设置面板 M6:五档即时生效,当前行下一帧起按新速走) */
+  setCps(cps: number): void {
+    this.opts = { ...this.opts, cps };
+  }
+
   /** 停止当前行且不触发完成回调(换行/打断用) */
   cancel(): void {
     if (this.raf) cancelAnimationFrame(this.raf);
