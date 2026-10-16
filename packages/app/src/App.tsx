@@ -1,11 +1,14 @@
 /**
- * 最小 play 壳(M3→M4):舞台/台词窗/选项浮层都是原生 DOM(bootstrap+engine),
- * React 只做 chrome——标题画面、状态条/preview/警告。面板(存档/设置/backlog)M5-M6。
+ * 最小 play 壳(M3→M5):舞台/台词窗/选项浮层都是原生 DOM(bootstrap+engine),
+ * React 只做 chrome——标题画面(スタート/つづきから)、HUD(状态/菜单/存读)、
+ * preview/警告。面板(设置/backlog/键位)M6。
  */
 import { useEffect, useState } from "react";
 import type { EngineSnapshot } from "@gal/engine";
+import type { SaveData } from "@gal/shared";
 import { getAssembled } from "./bootstrap.ts";
 import type { Assembled } from "./bootstrap.ts";
+import { SaveLoadPanel } from "./ui/SaveLoadPanel.tsx";
 
 export function App() {
   const [asm, setAsm] = useState<Assembled | null>(null);
@@ -15,6 +18,8 @@ export function App() {
   const [status, setStatus] = useState("");
   const [warning, setWarning] = useState("");
   const [voiceFail, setVoiceFail] = useState(0);
+  const [panel, setPanel] = useState<"save" | "load" | null>(null);
+  const [autoSave, setAutoSave] = useState<SaveData | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -33,6 +38,7 @@ export function App() {
   useEffect(() => {
     if (!asm) return;
     setSnap(asm.engine.snapshot());
+    setAutoSave(asm.saves.latestAuto());
     const offs = [
       asm.engine.subscribe(() => setSnap(asm.engine.snapshot())),
       asm.bus.on("generation:preview", ({ text }) => setPreview(text)),
@@ -70,6 +76,11 @@ export function App() {
         <button type="button" className="start-btn" onClick={() => asm.start()}>
           スタート
         </button>
+        {autoSave && (
+          <button type="button" className="start-btn sub" onClick={() => void asm.startFromSave(autoSave)}>
+            つづきから
+          </button>
+        )}
         <p className="title-note">DeepSeek proxy(/llm)と GPT-SoVITS(:9880)が稼働中であること</p>
       </div>
     );
@@ -79,24 +90,36 @@ export function App() {
 
   return (
     <>
-      {/* 画面点击 = 打字机快进(选项浮起时关闭) */}
+      {/* 画面点击 = 打字机快进(选项浮起/面板开时关闭) */}
       <div
         className="click-catcher"
-        style={{ display: busy ? "block" : "none" }}
+        style={{ display: busy && panel === null ? "block" : "none" }}
         onClick={() => asm.engine.advance()}
       />
 
       <div className="chrome hud">
         {status && <span className="chip">{status}</span>}
         {preview && <span className="chip ghost">…{preview.slice(-24)}</span>}
-        {warning && <span className="chip warn" title={warning}>⚠</span>}
+        {warning && (
+          <span className="chip warn" title={warning}>
+            ⚠
+          </span>
+        )}
         {voiceFail > 0 && <span className="chip warn">音声失敗×{voiceFail}</span>}
+        <button type="button" className="chip btn" onClick={() => setPanel("save")}>
+          セーブ
+        </button>
+        <button type="button" className="chip btn" onClick={() => setPanel("load")}>
+          ロード
+        </button>
         {asm.runner?.running && (
           <button type="button" className="chip btn" onClick={() => asm.stop()}>
             ■ 停止
           </button>
         )}
       </div>
+
+      {panel !== null && <SaveLoadPanel asm={asm} mode={panel} onClose={() => setPanel(null)} />}
     </>
   );
 }

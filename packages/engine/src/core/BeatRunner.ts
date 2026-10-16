@@ -8,6 +8,7 @@ import type {
   BeatDirective,
   ContentPort,
   HistoryItem,
+  SaveCurrentBeat,
   StoryChunk,
   StoryService,
   Summary,
@@ -40,6 +41,10 @@ export class BeatRunner {
   #summarizedThrough: string = "";
   /** 选项停等句柄 */
   #choiceWaiter: (() => void) | null = null;
+  /** 进行中的拍(writing 中点存档的 pendingContinuation 依据;拍边界为 null) */
+  #currentBeat: SaveCurrentBeat | null = null;
+  /** 读档续写:下一轮循环跳过导演,直接用存档里的拍指令(引擎已 resumeTurn) */
+  #resumeBeat: SaveCurrentBeat | null = null;
 
   constructor(deps: BeatRunnerDeps) {
     this.#deps = deps;
@@ -63,6 +68,11 @@ export class BeatRunner {
     return this.#outlineBeatIndex;
   }
 
+  /** 进行中的拍(存档 SaveSystem 用);拍边界/停止时 null */
+  get currentBeat(): SaveCurrentBeat | null {
+    return this.#currentBeat;
+  }
+
   /** 打断当前生成(ESC/停止):abort + 打字机取消;已提交行保留。循环在行边界退出 */
   stopGeneration(): void {
     this.#abort?.abort();
@@ -78,6 +88,8 @@ export class BeatRunner {
     this.#summary = EMPTY_SUMMARY;
     this.#summarizedThrough = "";
     this.#outlineBeatIndex = this.#deps.outlineBeatCount === null ? null : 0;
+    this.#currentBeat = null;
+    this.#resumeBeat = null;
     this.#deps.engine.replay([]);
     this.#deps.engine.setPhase("title");
   }
@@ -93,22 +105,32 @@ export class BeatRunner {
     try {
       engine.setPhase("play");
       while (!abort.signal.aborted) {
-        // ---- ① 导演 ----
-        bus.emit("generation:status", { phase: "directing", turnNo: engine.turnNo });
-        const directive = await story.nextBeat({
-          world: engine.world,
-          summary: this.#summary,
-          history: this.#history(),
-          lastChoice: this.#lastChoiceLabel() ? { label: this.#lastChoiceLabel()! } : null,
-          outlineBeatIndex: this.#outlineBeatIndex,
-          signal: abort.signal,
-        });
-        if (abort.signal.aborted) break;
+        // ---- ① 导演(读档续写时跳过:拍号/游标已由 restore 恢复) ----
+        let directive: BeatDirective;
+        if (this.#resumeBeat) {
+          directive = this.#resumeBeat.directive;
+          this.#resumeBeat = null;
+          bus.emit("generation:status", { phase: "directing", turnNo: engine.turnNo });
+        } else {
+          bus.emit("generation:status", { phase: "directing", turnNo: engine.turnNo });
+          directive = await story.nextBeat({
+            world: engine.world,
+            summary: this.#summary,
+            history: this.#history(),
+            lastChoice: this.#lastChoiceLabel() ? { label: this.#lastChoiceLabel()! } : null,
+            outlineBeatIndex: this.#outlineBeatIndex,
+            signal: abort.signal,
+          });
+          if (abort.signal.aborted) break;
+          engine.beginTurn();
+        }
 
         // ---- ② 编剧 ----
-        const turnNo = engine.beginTurn();
+        const turnNo = engine.turnNo;
+        this.#currentBeat = { turnNo, directive };
         bus.emit("generation:status", { phase: "writing", turnNo });
         const end = await this.#consumeBeat(directive, turnNo, abort);
+        this.#currentBeat = null;
         if (abort.signal.aborted) break;
         if (end === "fatal") {
           bus.emit("generation:status", { phase: "error", turnNo, error: "生成失败" });
@@ -125,7 +147,8 @@ export class BeatRunner {
         if (this.#outlineBeatIndex !== null && this.#deps.outlineBeatCount) {
           this.#outlineBeatIndex = Math.min(this.#outlineBeatIndex + 1, this.#deps.outlineBeatCount);
         }
-        // M5:此处 autosave(auto 槽)
+        // M5:auto 存档由 SaveSystem 挂 beat:end(choice 的收束走 choice:resolved)
+        bus.emit("beat:end", { result: end, turnNo });
       }
       if (!abort.signal.aborted || engine.phase !== "choicing") {
         bus.emit("generation:status", { phase: "idle", turnNo: engine.turnNo });
@@ -309,10 +332,17 @@ export class BeatRunner {
     }
   }
 
-  /** M5 存档读恢复 */
-  restore(summary: Summary, summarizedThrough: string, outlineBeatIndex: number | null): void {
-    this.#summary = summary;
-    this.#summarizedThrough = summarizedThrough;
-    this.#outlineBeatIndex = outlineBeatIndex;
+  /** M5 存档读恢复(runner 侧:摘要/大纲游标/拍进行中;引擎侧走 EngineCore.restoreFromSave) */
+  restore(state: {
+    summary: Summary;
+    summarizedThrough: string;
+    outlineBeatIndex: number | null;
+    currentBeat?: SaveCurrentBeat | null;
+  }): void {
+    this.#summary = state.summary;
+    this.#summarizedThrough = state.summarizedThrough;
+    this.#outlineBeatIndex = state.outlineBeatIndex;
+    this.#resumeBeat = state.currentBeat ?? null;
+    this.#currentBeat = null;
   }
 }

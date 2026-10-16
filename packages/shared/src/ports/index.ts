@@ -78,6 +78,8 @@ export interface GameEventMap {
     state: "synth" | "ready" | "playing" | "done" | "failed" | "muted";
   };
   "clock:mode": { mode: ClockMode };
+  /** 一拍收束(BeatRunner 在拍尾、摘要/大纲推进之后发;M5 自动存档挂这里) */
+  "beat:end": { result: "choice" | "beatEnd" | "sceneEnd"; turnNo: number };
   "save:written": { slot: string };
   /** 非致命告警:未知表情回退、缺图占位、TTS 降级等 */
   "engine:warning": { message: string };

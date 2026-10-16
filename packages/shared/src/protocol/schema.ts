@@ -81,3 +81,10 @@ export const ScriptEventSchema = z.discriminatedUnion("t", [
   StageEventSchema,
   ChoiceOfferEventSchema,
 ]);
+
+/** 舞台呈现快照(存档用;bgm 归音频侧单独记录) */
+export const PresentationSnapshotSchema = z.object({
+  bg: z.string().nullable(),
+  bgm: z.string().nullable(),
+  sprites: z.record(z.string(), z.object({ slot: SlotSchema, emotion: z.string() })),
+});

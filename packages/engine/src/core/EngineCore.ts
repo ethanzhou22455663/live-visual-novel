@@ -7,6 +7,7 @@
  * beginTurn 分配新拍号,同拍续写用 resumeTurn 续 seq,行号单调不重复。
  */
 import {
+  EMPTY_SUMMARY,
   EMPTY_WORLD,
   WorldDeltaSchema,
   combineDeltas,
@@ -15,6 +16,7 @@ import {
   foldWorld,
   makeLineId,
   mergeDelta,
+  trimLedger,
 } from "@gal/shared";
 import type {
   ClockMode,
@@ -26,8 +28,11 @@ import type {
   ModelScriptEvent,
   PresentationSnapshot,
   PublicChoiceOffer,
+  SaveCurrentBeat,
+  SaveData,
   ScriptEvent,
   SpeakerId,
+  Summary,
   WorldState,
 } from "@gal/shared";
 import type { EventBus } from "./EventBus.ts";
@@ -74,8 +79,10 @@ export class EngineCore {
   readonly content: ContentPort;
 
   #ledger: LedgerEntry[] = [];
-  #turnNo = 1; // 当前拍号(beginTurn/resumeTurn 设置)
+  #turnNo = 1; // 当前(或最后已开始的)拍号
   #seq = 0; // 拍内下一个待分配序号
+  /** false ⇒ #turnNo 尚未开始(新游戏/空档),beginTurn 分配 #turnNo 本身;true ⇒ 分配 #turnNo+1 */
+  #turnStarted = false;
   #phase: EnginePhase = "title";
   #world: WorldState = EMPTY_WORLD;
   #pendingChoice: PublicChoiceOffer | null = null;
@@ -190,18 +197,23 @@ export class EngineCore {
 
   // ---- 拍事务(plan §1.1/§1.4) ----
 
-  /** 新拍:分配严格递增的新拍号,seq 归零 */
+  /**
+   * 新拍:分配严格递增的新拍号,seq 归零。
+   * 拍号基准是 #turnNo 状态而非 ledger 尾条目——存档 ledger 被摘要裁剪后,
+   * 尾条目拍号可能远小于真实进度(M5),从 ledger 推导会回退重号。
+   */
   beginTurn(): number {
-    const last = this.#ledger[this.#ledger.length - 1];
-    this.#turnNo = last ? last.turnNo + 1 : 1;
+    this.#turnNo = this.#turnStarted ? this.#turnNo + 1 : this.#turnNo;
+    this.#turnStarted = true;
     this.#seq = 0;
     return this.#turnNo;
   }
 
-  /** 读档续写/同拍续写:沿用指定拍号,seq = 拍内下一个待分配序号 */
+  /** 读档续写/同拍续写:沿用指定拍号,seq = 拍内下一个待分配序号;拍视为已开始 */
   resumeTurn(turnNo: number, seq: number): void {
     this.#turnNo = turnNo;
     this.#seq = seq;
+    this.#turnStarted = true;
   }
 
   /**
@@ -320,11 +332,19 @@ export class EngineCore {
     this.cancelTypewriter();
     this.#currentLine = null;
     this.stage.reset();
+    this.#readState = [];
     this.#ledger = [...entries];
     this.#world = foldWorld(entries);
     this.#pendingChoice = null; // 选项即时性:重放不恢复"等玩家"状态
-    const c = cursorAfter(entries);
-    this.resumeTurn(c.turnNo, c.seq);
+    if (entries.length === 0) {
+      // 空档 = 新游戏语义:第 1 拍尚未开始(beginTurn 将分配 1)
+      this.#turnNo = 1;
+      this.#seq = 0;
+      this.#turnStarted = false;
+    } else {
+      const c = cursorAfter(entries);
+      this.resumeTurn(c.turnNo, c.seq);
+    }
     this.setPhase("play"); // 读档落地不回"choicing"(选项即时性:重放不恢复等玩家状态)
     // 视觉终态:按序应用 bg/sprite/speak;shake/flash 是瞬态特效,重放跳过
     for (const e of entries) {
@@ -377,6 +397,72 @@ export class EngineCore {
   /** 舞台呈现快照(M5 存档用) */
   presentationSnapshot(): PresentationSnapshot {
     return this.stage.snapshot();
+  }
+
+  // ---- 游玩时间与存档(M5) ----
+
+  #playTimeSec = 0;
+  #playClockAt: number | null = null; // Date.now() 锚点;null = 未开始计时
+  #readState: string[] = [];
+
+  /** 累计游玩秒数(检查点制:toSaveData/restoreFromSave 落账,无定时器) */
+  get playTimeSec(): number {
+    return this.#playClockAt === null ? this.#playTimeSec : this.#playTimeSec + (Date.now() - this.#playClockAt) / 1000;
+  }
+
+  /** 开始计时(标题点スタート时调;重复调用无害) */
+  startPlayClock(): void {
+    if (this.#playClockAt === null) this.#playClockAt = Date.now();
+  }
+
+  #checkpointPlayTime(): void {
+    this.#playTimeSec = this.playTimeSec;
+    this.#playClockAt = Date.now();
+  }
+
+  /**
+   * 存档快照(plan §1.6):ledger 按摘要游标裁剪、cursor 独立存、
+   * currentBeat 在场 = writing 中点保存(pendingContinuation)。
+   * summary/outlineBeatIndex/currentBeat 由 BeatRunner 持有,经 parts 注入。
+   */
+  toSaveData(
+    parts: { summary?: Summary; outlineBeatIndex?: number | null; currentBeat?: SaveCurrentBeat | null } = {},
+  ): SaveData {
+    const summary = parts.summary ?? EMPTY_SUMMARY;
+    this.#checkpointPlayTime();
+    const label = parts.currentBeat
+      ? `${parts.currentBeat.turnNo}拍目:${parts.currentBeat.directive.goal}`
+      : `${this.#turnNo}拍目`;
+    return {
+      version: 1,
+      meta: { savedAt: new Date().toISOString(), playTimeSec: this.#playTimeSec, chapterLabel: label },
+      world: this.#world,
+      summary,
+      ledger: trimLedger(this.#ledger, summary.summarizedThroughLineId),
+      presentation: this.presentationSnapshot(),
+      cursor: this.cursor,
+      outlineBeatIndex: parts.outlineBeatIndex ?? null,
+      pendingContinuation: parts.currentBeat != null,
+      currentBeat: parts.currentBeat ?? null,
+      readState: [...this.#readState],
+    };
+  }
+
+  /**
+   * 从存档恢复引擎侧状态:ledger/world/cursor/舞台终态/游玩时间。
+   * 摘要与拍进行中信息(summary/currentBeat)归 BeatRunner.restore,由 SaveSystem 协调。
+   * 拍状态以 save.cursor 为准——摘要裁剪可能清空 ledger,replay 的空档分支(新游戏语义)
+   * 会把拍号回退到 1;仅「cursor={1,0} 且零提交」视作真新档。
+   */
+  restoreFromSave(save: SaveData): void {
+    this.#readState = [];
+    this.replay(save.ledger);
+    const fresh = save.ledger.length === 0 && save.cursor.turnNo === 1 && save.cursor.seq === 0;
+    if (!fresh) this.resumeTurn(save.cursor.turnNo, save.cursor.seq);
+    this.stage.restore(save.presentation); // bg/bgm 权威值(replay 不覆盖 bgm)
+    this.#playTimeSec = save.meta.playTimeSec;
+    this.#playClockAt = Date.now();
+    this.setPhase("play");
   }
 
   // ---- 内部 ----

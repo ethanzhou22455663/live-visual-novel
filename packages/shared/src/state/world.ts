@@ -3,6 +3,7 @@
  * 任何状态都是对 ledger 的纯 fold——applyEvent 永远返回新对象。
  */
 import { WorldDeltaSchema } from "../protocol/schema.ts";
+import { z } from "zod";
 import type { WorldDelta } from "../protocol/script.ts";
 
 export const AFFECTION_MIN = -100;
@@ -13,6 +14,11 @@ export interface WorldState {
   affection: Record<string, number>;
   flags: Record<string, boolean | number | string>;
 }
+
+export const WorldStateSchema = z.object({
+  affection: z.record(z.string(), z.number()),
+  flags: z.record(z.string(), z.union([z.boolean(), z.number(), z.string()])),
+});
 
 export const EMPTY_WORLD: WorldState = { affection: {}, flags: {} };
 

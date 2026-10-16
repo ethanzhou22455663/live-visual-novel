@@ -12,14 +12,16 @@ import {
   EngineCore,
   EventBus,
   PresentationClock,
+  SaveSystem,
   VoicePipeline,
   createDomStagePort,
 } from "@gal/engine";
 import type { StageDeps, StagePort } from "@gal/engine";
 import { DeepseekClient, createStoryService, outlineBeatCount, parseContentPack } from "@gal/director";
-import type { ContentPack, ContentPort, EnqueueLineRequest, ReadyClip, VoiceSynthPort } from "@gal/shared";
+import type { ContentPack, ContentPort, EnqueueLineRequest, ReadyClip, SaveData, VoiceSynthPort } from "@gal/shared";
 import { splitSentences } from "@gal/shared";
 import { GptSovitsProvider, SynthQueue } from "@gal/tts-bridge";
+import { LocalStorageAdapter } from "./storage/LocalStorageAdapter.ts";
 
 export interface Assembled {
   pack: ContentPack;
@@ -28,10 +30,15 @@ export interface Assembled {
   stage: StagePort;
   bus: EventBus;
   audio: AudioBus;
+  saves: SaveSystem;
   /** start() 首次调用时建立(需解锁后的 VoiceChannel);此前 null */
   readonly runner: BeatRunner | null;
   /** 标题「スタート」:解锁音频(首次同时建 runner)并启动 beat 主循环 */
   start(): void;
+  /** 标题「つづきから」:读 auto/指定档 → 续写起跑 */
+  startFromSave(save: SaveData): Promise<void>;
+  /** 游戏中读档(菜单):停旧循环 → 恢复 → 起新循环 */
+  continueFrom(save: SaveData): Promise<void>;
   /** 停止生成:abort + 打字机取消;已提交行保留生效 */
   stop(): void;
   warnings: string[];
@@ -194,6 +201,52 @@ async function assemble(): Promise<Assembled> {
 
   const audio = new AudioBus();
   let runner: BeatRunner | null = null;
+  const ensureRunner = (): BeatRunner => {
+    runner ??= new BeatRunner({
+      engine,
+      bus,
+      story,
+      voice: synth ? new VoicePipeline({ bus, synth, voiceChannel: audio.voiceChannel }) : null,
+      content,
+      outlineBeatCount: outlineBeatCount(pack.story.outlineMd),
+      onError: (e) => {
+        const m = e instanceof Error ? e.message : String(e);
+        warnings.push(m);
+        console.warn("[runner]", m);
+      },
+    });
+    return runner;
+  };
+
+  // 名牌是 line:commit 驱动的;读档 replay 不发该事件 → 从 ledger 尾部补同步
+  const syncNamePlate = (): void => {
+    for (let i = engine.ledger.length - 1; i >= 0; i--) {
+      const e = engine.ledger[i]!;
+      if (e.kind !== "ev") continue;
+      if (e.ev.t === "say") {
+        nameEl.textContent = content.displayNameOf(e.ev.who);
+        nameEl.style.color = pack.characters[e.ev.who]?.color || "";
+        vn.dataset.narration = "false";
+      } else if (e.ev.t === "narrate") {
+        nameEl.textContent = "ナレーション";
+        nameEl.style.color = "";
+        vn.dataset.narration = "true";
+      }
+      break;
+    }
+  };
+
+  const saves = new SaveSystem({ engine, bus, storage: new LocalStorageAdapter(), getRunner: () => runner });
+
+  /** 读档共用:恢复引擎+runner → 名牌同步 → 起循环(旧循环若在,先让出一个宏任务) */
+  const resumeAndRun = async (save: SaveData): Promise<void> => {
+    audio.unlock(); // 手势入口(菜单/标题按钮)内调用,坑#16
+    const r = ensureRunner();
+    saves.continueFrom(save);
+    syncNamePlate();
+    await new Promise((res) => setTimeout(res, 0)); // 旧 run 循环在微任务里退出,#running 归 false
+    await r.run();
+  };
 
   return {
     pack,
@@ -202,26 +255,22 @@ async function assemble(): Promise<Assembled> {
     stage,
     bus,
     audio,
+    saves,
     warnings,
     get runner() {
       return runner;
     },
     start() {
       audio.unlock(); // 坑#16:必须在点击手势里
-      runner ??= new BeatRunner({
-        engine,
-        bus,
-        story,
-        voice: synth ? new VoicePipeline({ bus, synth, voiceChannel: audio.voiceChannel }) : null,
-        content,
-        outlineBeatCount: outlineBeatCount(pack.story.outlineMd),
-        onError: (e) => {
-          const m = e instanceof Error ? e.message : String(e);
-          warnings.push(m);
-          console.warn("[runner]", m);
-        },
-      });
-      void runner.run();
+      engine.startPlayClock();
+      void ensureRunner().run();
+    },
+    startFromSave(save: SaveData) {
+      engine.startPlayClock();
+      return resumeAndRun(save);
+    },
+    continueFrom(save: SaveData) {
+      return resumeAndRun(save);
     },
     stop() {
       runner?.stopGeneration();

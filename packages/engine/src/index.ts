@@ -8,5 +8,7 @@ export * from "./core/KeyBindings.ts";
 export * from "./core/BeatRunner.ts";
 export * from "./audio/VoicePipeline.ts";
 export * from "./game/Backlog.ts";
+export * from "./game/ChoiceOverlay.ts";
+export * from "./game/SaveSystem.ts";
 export * from "./presentation/ports.ts";
 export * from "./presentation/DomStagePort.ts";
