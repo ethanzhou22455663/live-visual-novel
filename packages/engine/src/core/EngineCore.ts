@@ -93,6 +93,8 @@ export class EngineCore {
   #tw: Typewriter;
   #currentLineId: LineId | null = null;
   #twWaiters = new Map<LineId, Set<() => void>>();
+  /** 已打完且仍是 currentLineId 的行:晚到的演出链步(语音慢于打字时)必须立即放行 */
+  #twTypedDone = new Set<LineId>();
   #currentLine: { who: string; emotion: string } | null = null;
   #skipAutoPick: boolean;
   #choiceOverlay: ChoiceOverlay | null = null;
@@ -368,14 +370,48 @@ export class EngineCore {
     this.#notify();
   }
 
-  /** 打断当前打字机(Ctrl 快进/Esc):瞬间补完 */
+  /** 推进(点击/Enter):打字中=瞬间补完;等待中=快进语音/停留 */
   advance(): void {
-    this.#tw.skip();
+    if (this.#tw.typing) {
+      this.#tw.skip(); // 第一击:补完当前行文本,语音照常播
+      return;
+    }
+    // 第二击:跳过语音等待/停留,present 链立即收束
+    this.#presVersion++;
+    for (const w of this.#presWaiters) w.res(true);
+    this.#presWaiters.clear();
   }
 
-  /** 演出链等待打字机完(行被顶替/已取消 → 立即放行,绝不挂死) */
+  // ---- 演出快进(点击/Enter 的第二段语义;mock/ui.html 同款手感) ----
+  // 第一击(打字中)= 补完文本,不动演出;第二击(等待中)= 跳过语音/停留。
+  #presVersion = 0;
+  #presWaiters = new Set<{ v0: number; res: (v: boolean) => void }>();
+
+  /** 演出快进版本号(present 链拿 v0 快照,判"等待期间玩家点击过没有") */
+  get presentationVersion(): number {
+    return this.#presVersion;
+  }
+
+  /**
+   * 等待玩家点击快进:v0 之后 advance 过 → 立即 true;否则挂起直到下一次 advance。
+   * 与语音/停留等待 Promise.race,赢方决定收束。
+   */
+  waitPresentationSkip(v0: number): Promise<boolean> {
+    if (this.#presVersion > v0) return Promise.resolve(true);
+    return new Promise((res) => {
+      this.#presWaiters.add({ v0, res });
+    });
+  }
+
+  /** 放行全部快进等待者(读档/停生成;不视作点击) */
+  #flushPresentationWaiters(): void {
+    for (const w of this.#presWaiters) w.res(false);
+    this.#presWaiters.clear();
+  }
+
+  /** 演出链等待打字机完(行被顶替/已打完/已取消 → 立即放行,绝不挂死) */
   waitForTypewriter(lineId: LineId): Promise<void> {
-    if (this.#currentLineId !== lineId) return Promise.resolve();
+    if (this.#currentLineId !== lineId || this.#twTypedDone.has(lineId)) return Promise.resolve();
     return new Promise((res) => {
       let set = this.#twWaiters.get(lineId);
       if (!set) {
@@ -399,6 +435,7 @@ export class EngineCore {
     const cur = this.#currentLineId;
     this.#currentLineId = null;
     if (cur) this.#resolveTw(cur);
+    this.#flushPresentationWaiters();
   }
 
   /** 舞台呈现快照(M5 存档用) */
@@ -477,8 +514,11 @@ export class EngineCore {
   #present(lineId: LineId, text: string): void {
     // 新行顶替旧行:旧行的等待者立即放行(演出链快速跟进)
     if (this.#currentLineId && this.#currentLineId !== lineId) this.#resolveTw(this.#currentLineId);
+    // 旧「已打完」标记作废:被顶替的行此后走 ≠currentLineId 立即放行路径
+    this.#twTypedDone.clear();
     this.#currentLineId = lineId;
     void this.#tw.start(text).then(() => {
+      this.#twTypedDone.add(lineId);
       this.#resolveTw(lineId);
       if (this.#currentLineId === lineId) {
         this.bus.emit("typewriter:done", { lineId });

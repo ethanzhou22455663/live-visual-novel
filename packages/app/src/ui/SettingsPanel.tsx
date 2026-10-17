@@ -1,5 +1,6 @@
 /**
- * 设置面板(M6):字速五档 / 三音量 / UI 语言。改动即时生效 + 持久化(global scope)。
+ * 设置面板(M6;mock/ui.html 类名 .cfgrow/.tier-btn):字速五档 / 三音量 / UI 语言。
+ * 改动即时生效 + 持久化(global scope)。
  */
 import { useState } from "react";
 import type { Assembled } from "../bootstrap.ts";
@@ -27,36 +28,36 @@ export function SettingsPanel({
   const speedIndex = Math.max(0, CPS_TIERS.indexOf(s.cpsMs as (typeof CPS_TIERS)[number]));
 
   return (
-    <div className="panel-overlay" role="dialog" aria-label={tr.settings}>
-      <div className="panel">
-        <header className="panel-head">
+    <div className="panel" role="dialog" aria-label={tr.settings}>
+      <div className="pbox">
+        <header className="phead">
           <h2>{tr.settings}</h2>
-          <button type="button" className="panel-close" onClick={onClose}>
+          <button type="button" className="pclose" onClick={onClose}>
             ✕
           </button>
         </header>
-
-        <section className="set-group">
-          <h3>{tr.textSpeed}</h3>
-          <div className="set-tiers">
-            {CPS_TIERS.map((ms, i) => (
-              <button
-                key={ms}
-                type="button"
-                className={`tier-btn${i === speedIndex ? " on" : ""}`}
-                onClick={() => update({ ...s, cpsMs: ms })}
-              >
-                {tr.speedLabels[i]}
-              </button>
-            ))}
+        <div className="pbody">
+          {/* 字速:五档文字按钮(mock .set-tiers) */}
+          <div className="cfgrow">
+            <label>{tr.textSpeed}</label>
+            <div className="set-tiers">
+              {CPS_TIERS.map((ms, i) => (
+                <button
+                  key={ms}
+                  type="button"
+                  className={`tier-btn${i === speedIndex ? " on" : ""}`}
+                  onClick={() => update({ ...s, cpsMs: ms })}
+                >
+                  {tr.speedLabels[i]}
+                </button>
+              ))}
+            </div>
           </div>
-        </section>
 
-        <section className="set-group">
-          <h3>{tr.volume}</h3>
+          {/* 三音量:range + 数值(mock .cfgrow) */}
           {(["bgm", "se", "voice"] as const).map((ch) => (
-            <label key={ch} className="set-vol">
-              <span className="vol-label">{tr[ch]}</span>
+            <div key={ch} className="cfgrow">
+              <label>{tr[ch]}</label>
               <input
                 type="range"
                 min={0}
@@ -65,21 +66,22 @@ export function SettingsPanel({
                 value={s.volumes[ch]}
                 onChange={(e) => update({ ...s, volumes: { ...s.volumes, [ch]: Number(e.target.value) } })}
               />
-              <span className="vol-num">{Math.round(s.volumes[ch] * 100)}</span>
-            </label>
+              <span className="val">{Math.round(s.volumes[ch] * 100)}</span>
+            </div>
           ))}
-        </section>
 
-        <section className="set-group">
-          <h3>{tr.language}</h3>
-          <div className="set-tiers">
-            {(["ja", "zh"] as const).map((l) => (
-              <button key={l} type="button" className={`tier-btn${lang === l ? " on" : ""}`} onClick={() => onLang(l)}>
-                {l === "ja" ? "日本語" : "中文"}
-              </button>
-            ))}
+          {/* UI 语言 */}
+          <div className="cfgrow">
+            <label>{tr.language}</label>
+            <div className="set-tiers">
+              {(["ja", "zh"] as const).map((l) => (
+                <button key={l} type="button" className={`tier-btn${lang === l ? " on" : ""}`} onClick={() => onLang(l)}>
+                  {l === "ja" ? "日本語" : "中文"}
+                </button>
+              ))}
+            </div>
           </div>
-        </section>
+        </div>
       </div>
     </div>
   );

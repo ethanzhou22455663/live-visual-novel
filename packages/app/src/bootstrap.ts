@@ -3,7 +3,9 @@
  * EventBus/PresentationClock → EngineCore → createStoryService → BeatRunner。
  * main.tsx 无 StrictMode(坑⑨),单例由模块级惰性初始化保证。
  * runner 延迟到标题点击:AudioContext 必须在用户手势里解锁(坑#16),
- * VoiceChannel 依赖解锁后的 ctx。React 只做 chrome(标题/选项/状态),舞台归 engine。
+ * VoiceChannel 依赖解锁后的 ctx。React 只做 chrome(标题/快捷菜单/面板),舞台归 engine。
+ * 坐标系:index.html 静态骨架(#stage 1920×1080),fit() 直接写 transform(mock/ui.html
+ * 同款,无 CSS 变量中介——旧的 --stage-scale 机制在缩放上不可信,已废)。
  * 合规:key 只在 dev proxy("/llm");refAudioPathServer 只进 POST body 不落 URL。
  */
 import {
@@ -119,30 +121,39 @@ export function getAssembled(): Promise<Assembled> {
   return singleton;
 }
 
+// 首帧即摆正舞台(manifest fetch 前 React 就挂了 loading 分支,不能等 assemble;
+// script type=module 在 DOM 解析完后执行,getElementById 此时可用)
+{
+  const el = document.getElementById("stage");
+  if (el) {
+    const s0 = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+    el.style.transform = `translate(-50%, -50%) scale(${s0})`;
+  }
+}
+
 async function assemble(): Promise<Assembled> {
   const warnings: string[] = [];
   const pack = await loadPack();
   const content = buildContentPort(pack);
 
-  // ---- 舞台挂载:固定全屏底层,1920×1080 逻辑坐标由本层 scale(外层负责 scale) ----
-  const holder = document.createElement("div");
-  holder.id = "gal-stage-holder";
-  document.body.prepend(holder);
-  const stage = createDomStagePort(buildStageDeps(holder, content, pack, warnings));
+  // ---- 舞台挂载:index.html 静态骨架,mock/ui.html 同构 ----
+  // 场景层(engine DomStagePort)在 .scene;台词窗 .win 与 React chrome(#root)
+  // 全部活在 #stage 的 1920×1080 逻辑坐标里,由 fit() 等比缩放。
+  const stageEl = document.getElementById("stage");
+  const sceneEl = document.getElementById("gal-scene");
+  const winEl = document.getElementById("gal-win");
+  const plateEl = document.getElementById("gal-plate");
+  const plateNm = plateEl?.querySelector<HTMLElement>(".nm") ?? null;
+  const textEl = document.getElementById("gal-text");
+  const nextEl = document.getElementById("gal-next");
+  if (!stageEl || !sceneEl || !winEl || !plateEl || !plateNm || !textEl || !nextEl) {
+    throw new Error("舞台骨架缺失:index.html 的 #stage/#gal-scene/#gal-win 等元素不存在");
+  }
+  const stage = createDomStagePort(buildStageDeps(sceneEl, content, pack, warnings));
 
-  // 台词窗(最小 chrome;M6 可挪进 React):名牌 + 打字机目标
-  const vn = document.createElement("section");
-  vn.className = "vn-window";
-  const nameEl = document.createElement("div");
-  nameEl.className = "vn-name";
-  const textEl = document.createElement("div");
-  textEl.className = "vn-text";
-  vn.append(nameEl, textEl);
-  holder.append(vn);
-
-  const fit = () => {
-    const scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
-    holder.style.setProperty("--stage-scale", String(scale));
+  const fit = (): void => {
+    const s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+    stageEl.style.transform = `translate(-50%, -50%) scale(${s})`;
   };
   fit();
   window.addEventListener("resize", fit);
@@ -165,7 +176,7 @@ async function assemble(): Promise<Assembled> {
     stage,
     content,
     textEl,
-    choiceRoot: holder, // 选项浮层挂舞台内(engine DOM;React 不再画选项)
+    choiceRoot: stageEl, // 选项浮层挂舞台内(engine DOM;z-index 6:窗上、面板下)
     skipAutoPick: true, // skip 模式自动选默认项
     cps: 28,
     // stage bgm/se 指令 → AudioBus;assetId→URL 查 pack.bgm 表(未知 id 告警不拦)
@@ -199,17 +210,37 @@ async function assemble(): Promise<Assembled> {
     else if (state === "done" || state === "failed" || state === "muted") audio.duckBgm(false);
   });
 
-  // 名牌随提交行更新(commit 事务点;replay 不发 line:commit,M5 读档后补同步)
+  // ---- 台词窗接线(mock 同款):commit 更新名牌并熄 ▼,打字完点亮 ▼,相位管窗体显隐 ----
   bus.on("line:commit", ({ event }) => {
+    nextEl.classList.remove("on");
     if (event.t === "say") {
-      nameEl.textContent = content.displayNameOf(event.who);
-      nameEl.style.color = pack.characters[event.who]?.color || "";
-      vn.dataset.narration = "false";
+      plateNm.textContent = content.displayNameOf(event.who);
+      plateEl.style.setProperty("--pc", pack.characters[event.who]?.color || "");
+      plateEl.classList.add("on");
     } else if (event.t === "narrate") {
-      nameEl.textContent = "ナレーション";
-      nameEl.style.color = "";
-      vn.dataset.narration = "true";
+      plateEl.classList.remove("on"); // 旁白无名牌(mock 同款)
     }
+  });
+  bus.on("typewriter:done", () => {
+    nextEl.classList.add("on");
+  });
+  bus.on("engine:phase", ({ phase }) => {
+    const show = phase === "play" || phase === "choicing";
+    winEl.classList.toggle("on", show);
+    if (!show) {
+      plateEl.classList.remove("on");
+      nextEl.classList.remove("on");
+    }
+  });
+
+  // ---- 舞台点击推进(mock 同款守卫:按钮/面板/选项/toast 不透传) ----
+  stageEl.addEventListener("click", (ev) => {
+    const target = ev.target as HTMLElement | null;
+    if (target?.closest("button, a, input, .panel, .mitem, .gal-choice, .toast")) return;
+    if (document.querySelector(".panel")) return; // 面板开着:点击只关面板逻辑归 React
+    const ph = engine.phase;
+    if (ph !== "play" && ph !== "choicing") return;
+    engine.advance();
   });
 
   // ---- 语音(M6 降级链):[GPT-SoVITS(per-char ref) → SilentProvider] ----
@@ -287,13 +318,11 @@ async function assemble(): Promise<Assembled> {
       const e = engine.ledger[i]!;
       if (e.kind !== "ev") continue;
       if (e.ev.t === "say") {
-        nameEl.textContent = content.displayNameOf(e.ev.who);
-        nameEl.style.color = pack.characters[e.ev.who]?.color || "";
-        vn.dataset.narration = "false";
+        plateNm.textContent = content.displayNameOf(e.ev.who);
+        plateEl.style.setProperty("--pc", pack.characters[e.ev.who]?.color || "");
+        plateEl.classList.add("on");
       } else if (e.ev.t === "narrate") {
-        nameEl.textContent = "ナレーション";
-        nameEl.style.color = "";
-        vn.dataset.narration = "true";
+        plateEl.classList.remove("on");
       }
       break;
     }

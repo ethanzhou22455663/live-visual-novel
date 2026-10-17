@@ -27,6 +27,11 @@ export class Typewriter {
   /** 进度回调(打字机与语音节奏配合用) */
   onProgress: ((ratio: number) => void) | null = null;
 
+  /** 正在逐字上屏中(advance 的两段语义:第一击补完文本,第二击快进语音/停留) */
+  get typing(): boolean {
+    return this.resolveDone !== null;
+  }
+
   private raf = 0;
   private resolveDone: (() => void) | null = null;
   private skipping = false;

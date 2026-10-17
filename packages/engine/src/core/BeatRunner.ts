@@ -20,6 +20,8 @@ import type { VoicePipeline } from "../audio/VoicePipeline.ts";
 
 const HISTORY_CAP = 30;
 
+const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 export interface BeatRunnerDeps {
   engine: EngineCore;
   bus: EventBus;
@@ -241,7 +243,7 @@ export class BeatRunner {
     }
   }
 
-  /** 行级流水线:打字机完 → 语音逐句 → 停留(不阻塞流消费) */
+  /** 行级流水线:打字机完 → 语音逐句 → 停留(不阻塞流消费;点击可快进) */
   async #presentSay(lineId: string, entries: ReturnType<VoicePipeline["enqueue"]>, signal: AbortSignal): Promise<void> {
     const { engine, voice } = this.#deps;
     if (!voice) return;
@@ -253,8 +255,16 @@ export class BeatRunner {
     }
     try {
       await engine.waitForTypewriter(lineId);
-      await voice.playOut(entries, signal);
-      await voice.dwell(mode === "auto" ? 800 : 400);
+      if (signal.aborted) return;
+      // 玩家第二击(等待中点击)= 快进:停当前句、放弃余句、跳过停留
+      const v0 = engine.presentationVersion;
+      const interrupt = engine.waitPresentationSkip(v0);
+      const skipped = await Promise.race([
+        voice.playOut(entries, signal, interrupt).then(() => false),
+        interrupt.then(() => true),
+      ]);
+      if (skipped) voice.stopCurrent();
+      await Promise.race([interrupt, delay(mode === "auto" ? 800 : 400)]);
     } catch (e) {
       this.#deps.onError?.(e);
     }
@@ -270,7 +280,9 @@ export class BeatRunner {
     if (!voice || signal.aborted) return;
     try {
       await engine.waitForTypewriter(lineId);
-      await voice.dwell(mode === "auto" ? 800 : 400);
+      if (signal.aborted) return;
+      const v0 = engine.presentationVersion;
+      await Promise.race([engine.waitPresentationSkip(v0), delay(mode === "auto" ? 800 : 400)]);
     } catch (e) {
       this.#deps.onError?.(e);
     }

@@ -1,6 +1,7 @@
 /**
- * 历史记录面板(M6):ledger 派生只读视图(engine.game.Backlog 的 UI 面)。
- * cap 200(engine 侧同值);say → 名牌+台词,narrate → 旁白,choice → ▶ label。
+ * 历史记录面板(M6;mock/ui.html 类名 .logrow/.n/.t):ledger 派生只读视图
+ * (engine.game.Backlog 的 UI 面)。cap 200(engine 侧同值);
+ * say → 名牌(个人色)+台词,narrate → 暗色旁白,choice → 朱色 ▶ label。
  */
 import { useMemo } from "react";
 import { toHistoryItems } from "@gal/shared";
@@ -13,38 +14,40 @@ export function BacklogPanel({ asm, lang, onClose }: { asm: Assembled; lang: Lan
   const tr = t(lang);
   const items = useMemo(() => toHistoryItems(asm.engine.ledger, CAP), [asm]);
   return (
-    <div className="panel-overlay" role="dialog" aria-label={tr.backlog}>
-      <div className="panel wide">
-        <header className="panel-head">
+    <div className="panel wide" role="dialog" aria-label={tr.backlog}>
+      <div className="pbox">
+        <header className="phead">
           <h2>{tr.backlog}</h2>
-          <button type="button" className="panel-close" onClick={onClose}>
+          <button type="button" className="pclose" onClick={onClose}>
             ✕
           </button>
         </header>
-        <div className="backlog-list">
-          {items.length === 0 && <p className="slot-meta empty">{tr.noData}</p>}
+        <div className="pbody">
+          {items.length === 0 && <p className="bl-empty">{tr.noData}</p>}
           {items.map((it, i) => {
             if (it.t === "choice") {
               return (
-                <p key={i} className="bl-choice">
-                  ▶ {it.label}
-                </p>
+                <div key={i} className="logrow ch">
+                  <span className="n" />
+                  <span className="t">▶ {it.label}</span>
+                </div>
               );
             }
             if (it.t === "narrate") {
               return (
-                <p key={i} className="bl-narrate">
-                  {it.text}
-                </p>
+                <div key={i} className="logrow nar">
+                  <span className="n" />
+                  <span className="t">{it.text}</span>
+                </div>
               );
             }
             return (
-              <p key={i} className="bl-say">
-                <span className="bl-name" style={{ color: asm.pack.characters[it.who]?.color || "" }}>
+              <div key={i} className="logrow">
+                <span className="n" style={{ color: asm.pack.characters[it.who]?.color || "" }}>
                   {asm.content.displayNameOf(it.who)}
                 </span>
-                {it.text}
-              </p>
+                <span className="t">{it.text}</span>
+              </div>
             );
           })}
         </div>

@@ -1,7 +1,7 @@
 /**
- * 存读面板(M5,M6 i18n 化):4 槽(auto+manual×3)一覧。セーブモードでは auto を
- * システム専用として無効化;ロードは空槽「データなし」、壊档は理由表示。
- * 実読書きは SaveSystem へ委譲。
+ * 存读面板(M5,M6 i18n 化;mock/ui.html 类名):4 槽(auto+manual×3)一覧。
+ * セーブモードでは auto をシステム専用として無効化;ロードは空槽「データなし」、
+ * 壊档は理由表示。実読書きは SaveSystem へ委譲。
  */
 import { useState } from "react";
 import type { SaveData, SaveSlot } from "@gal/shared";
@@ -65,60 +65,63 @@ export function SaveLoadPanel({
   };
 
   return (
-    <div className="panel-overlay" role="dialog" aria-label={mode === "save" ? tr.save : tr.load}>
-      <div className="panel">
-        <header className="panel-head">
+    <div className="panel" role="dialog" aria-label={mode === "save" ? tr.save : tr.load}>
+      <div className="pbox">
+        <header className="phead">
           <h2>{mode === "save" ? tr.save : tr.load}</h2>
-          <button type="button" className="panel-close" onClick={onClose}>
+          <button type="button" className="pclose" onClick={onClose}>
             ✕
           </button>
         </header>
-        {err && <p className="panel-err">{err}</p>}
-        <div className="slot-list">
-          {slots.map(({ slot, data, error }) => (
-            <div key={slot} className="slot-row" data-slot={slot}>
-              <div className="slot-info">
-                <span className="slot-name">{slotLabel(slot)}</span>
-                {data ? (
-                  <span className="slot-meta">
-                    {fmtSavedAt(data.meta.savedAt)} / {fmtPlayTime(data.meta.playTimeSec)} / {data.meta.chapterLabel}
-                  </span>
-                ) : (
-                  <span className="slot-meta empty">{error ? tr.broken(error) : tr.noData}</span>
-                )}
+        <div className="pbody">
+          {err && <p className="panel-err">{err}</p>}
+          <div className="slots">
+            {slots.map(({ slot, data, error }) => (
+              <div key={slot} className="slot" data-slot={slot}>
+                <span className={`tag${slot === "auto" ? " off" : ""}`}>{slotLabel(slot)}</span>
+                <div className="meta">
+                  {data ? (
+                    <>
+                      <b>{data.meta.chapterLabel}</b>
+                      {fmtSavedAt(data.meta.savedAt)} / {fmtPlayTime(data.meta.playTimeSec)}
+                    </>
+                  ) : (
+                    <b className="empty">{error ? tr.broken(error) : tr.noData}</b>
+                  )}
+                </div>
+                <div className="slot-actions">
+                  {mode === "save" && slot !== "auto" && (
+                    <button type="button" className="slot-btn" disabled={busy} onClick={() => doSave(slot)}>
+                      {tr.doSave}
+                    </button>
+                  )}
+                  {mode === "load" && (
+                    <button
+                      type="button"
+                      className="slot-btn"
+                      disabled={busy || !data}
+                      onClick={() => data && void doLoad(data)}
+                    >
+                      {tr.doLoad}
+                    </button>
+                  )}
+                  {data && slot !== "auto" && (
+                    <button
+                      type="button"
+                      className="slot-btn danger"
+                      disabled={busy}
+                      onClick={() => {
+                        asm.saves.remove(slot);
+                        onClose();
+                      }}
+                    >
+                      {tr.doDelete}
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="slot-actions">
-                {mode === "save" && slot !== "auto" && (
-                  <button type="button" className="slot-btn" disabled={busy} onClick={() => doSave(slot)}>
-                    {tr.doSave}
-                  </button>
-                )}
-                {mode === "load" && (
-                  <button
-                    type="button"
-                    className="slot-btn"
-                    disabled={busy || !data}
-                    onClick={() => data && void doLoad(data)}
-                  >
-                    {tr.doLoad}
-                  </button>
-                )}
-                {data && slot !== "auto" && (
-                  <button
-                    type="button"
-                    className="slot-btn danger"
-                    disabled={busy}
-                    onClick={() => {
-                      asm.saves.remove(slot);
-                      onClose();
-                    }}
-                  >
-                    {tr.doDelete}
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
     </div>

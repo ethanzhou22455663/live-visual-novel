@@ -1,6 +1,7 @@
 /**
- * play 壳(M3→M6):舞台/台词窗/选项浮层都是原生 DOM(bootstrap+engine),
- * React 只做 chrome——标题、HUD、面板(存读/设置/历史)、preview/警告。
+ * chrome 壳(M3→M6,mock/ui.html 移植):舞台/台词窗/选项浮层都是原生 DOM
+ * (bootstrap+engine),React 只画——标题画面(.title)、快捷菜单(.quick)、
+ * 状态角标(.status-tag)、toast、面板(存读/设置/历史)。
  * M6:KeyBindings(Enter/Space、Ctrl fast、↑/滚轮 backlog、Esc)、i18n(ja/zh)、
  * 设置面板(字速/音量/语言,global 持久化)。
  */
@@ -24,14 +25,19 @@ export function App() {
   const [snap, setSnap] = useState<EngineSnapshot | null>(null);
   const [preview, setPreview] = useState("");
   const [status, setStatus] = useState("");
-  const [warning, setWarning] = useState("");
-  const [voiceFail, setVoiceFail] = useState(0);
   const [panel, setPanel] = useState<PanelMode | null>(null);
   const [autoSave, setAutoSave] = useState<SaveData | null>(null);
   const [lang, setLang] = useState<Lang>(() => loadSettings().lang); // 与 bootstrap 初载同源
+  const [toast, setToast] = useState<{ id: number; msg: string } | null>(null);
   const kbRef = useRef<KeyBindings | null>(null);
   const prevMode = useRef<ClockMode>("normal");
+  const toastSeq = useRef(0);
+  const voiceFailToasted = useRef(false);
   const tr = t(lang);
+  const trRef = useRef(tr); // bus 回调里拿最新文案(闭包捕获的是挂载时的 lang)
+  trRef.current = tr;
+
+  const showToast = (msg: string): void => setToast({ id: ++toastSeq.current, msg });
 
   useEffect(() => {
     let alive = true;
@@ -58,15 +64,26 @@ export function App() {
         setStatus(error ?? (phase === "idle" ? "" : phase));
         if (phase === "idle") setPreview("");
       }),
-      asm.bus.on("engine:warning", ({ message }) => setWarning(message)),
+      asm.bus.on("engine:warning", ({ message }) => showToast(message)), // toast(mock;替代旧 ⚠ chip)
       asm.bus.on("voice:state", ({ state }) => {
-        if (state === "failed") setVoiceFail((n) => n + 1); // 降级可见化(承 P0)
+        // TTS 降级可见化(承 P0):仅首次 failed/muted 弹 toast,不刷屏
+        if ((state === "failed" || state === "muted") && !voiceFailToasted.current) {
+          voiceFailToasted.current = true;
+          showToast(trRef.current.voiceFail(1));
+        }
       }),
     ];
     return () => {
       for (const off of offs) off();
     };
   }, [asm]);
+
+  // toast 3.2s 自动消退(新 toast 顶替旧 toast,计时重置)
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 3200);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   // 键位(M6):面板开时进入"仅 Esc"模式(由 panel 副作用同步)
   useEffect(() => {
@@ -103,6 +120,25 @@ export function App() {
     saveSettings({ ...loadSettings(), lang: l }); // 面板内 update() 只在点字速/音量时写盘,语言单独落
   };
 
+  // 面板:标题与 play 共用(标题里也能开设置);asm 未就绪时自然为 null
+  const panelNode = asm
+    ? panel === "save"
+      ? <SaveLoadPanel asm={asm} lang={lang} mode="save" onClose={() => setPanel(null)} />
+      : panel === "load"
+        ? <SaveLoadPanel asm={asm} lang={lang} mode="load" onClose={() => setPanel(null)} />
+        : panel === "settings"
+          ? <SettingsPanel asm={asm} lang={lang} onLang={changeLang} onClose={() => setPanel(null)} />
+          : panel === "backlog"
+            ? <BacklogPanel asm={asm} lang={lang} onClose={() => setPanel(null)} />
+            : null
+    : null;
+
+  const toastNode = toast ? (
+    <div className="toast" key={toast.id}>
+      {toast.msg}
+    </div>
+  ) : null;
+
   if (fatal) {
     return (
       <div className="chrome fatal">
@@ -117,65 +153,61 @@ export function App() {
 
   if (snap.phase === "title") {
     return (
-      <div className="chrome title-screen">
-        <h1 className="game-title">{tr.title}</h1>
-        <p className="game-sub">{tr.subtitle}</p>
-        <button type="button" className="start-btn" onClick={() => asm.start()}>
-          {tr.start}
-        </button>
-        {autoSave && (
-          <button type="button" className="start-btn sub" onClick={() => void asm.startFromSave(autoSave)}>
-            {tr.resume}
+      <div className="title">
+        <div className="shade" />
+        <div className="logo">
+          <div className="kicker">{tr.subtitle}</div>
+          <h1>{tr.title}</h1>
+        </div>
+        <div className="menu">
+          <button type="button" className="mitem" onClick={() => asm.start()}>
+            {tr.start}
           </button>
-        )}
-        <p className="title-note">{tr.titleNote}</p>
+          {autoSave && (
+            <button type="button" className="mitem" onClick={() => void asm.startFromSave(autoSave)}>
+              {tr.resume}
+            </button>
+          )}
+          <button type="button" className="mitem" onClick={() => setPanel("settings")}>
+            {tr.settings}
+          </button>
+        </div>
+        <div className="tfoot">{tr.titleNote}</div>
+        {panelNode}
+        {toastNode}
       </div>
     );
   }
 
-  const busy = snap.phase !== "choicing";
-
   return (
     <>
-      {/* 画面点击 = 打字机快进(选项浮起/面板开时关闭) */}
-      <div
-        className="click-catcher"
-        style={{ display: busy && panel === null ? "block" : "none" }}
-        onClick={() => asm.engine.advance()}
-      />
-
-      <div className="chrome hud">
-        {status && <span className="chip">{status}</span>}
-        {preview && <span className="chip ghost">…{preview.slice(-24)}</span>}
-        {warning && (
-          <span className="chip warn" title={warning}>
-            ⚠
-          </span>
-        )}
-        {voiceFail > 0 && <span className="chip warn">{tr.voiceFail(voiceFail)}</span>}
-        <button type="button" className="chip btn" onClick={() => setPanel("save")}>
-          {tr.save}
-        </button>
-        <button type="button" className="chip btn" onClick={() => setPanel("load")}>
-          {tr.load}
-        </button>
-        <button type="button" className="chip btn" onClick={() => setPanel("backlog")}>
+      {(status || preview) && (
+        <div className="status-tag">
+          {status}
+          {preview ? ` …${preview.slice(-16)}` : ""}
+        </div>
+      )}
+      <div className="quick">
+        <button type="button" className="qbtn" onClick={() => setPanel("backlog")}>
           {tr.backlog}
         </button>
-        <button type="button" className="chip btn" onClick={() => setPanel("settings")}>
+        <button type="button" className="qbtn" onClick={() => setPanel("save")}>
+          {tr.save}
+        </button>
+        <button type="button" className="qbtn" onClick={() => setPanel("load")}>
+          {tr.load}
+        </button>
+        <button type="button" className="qbtn" onClick={() => setPanel("settings")}>
           {tr.settings}
         </button>
         {asm.runner?.running && (
-          <button type="button" className="chip btn" onClick={() => asm.stop()}>
+          <button type="button" className="qbtn" onClick={() => asm.stop()}>
             {tr.stop}
           </button>
         )}
       </div>
-
-      {panel === "save" && <SaveLoadPanel asm={asm} lang={lang} mode="save" onClose={() => setPanel(null)} />}
-      {panel === "load" && <SaveLoadPanel asm={asm} lang={lang} mode="load" onClose={() => setPanel(null)} />}
-      {panel === "settings" && <SettingsPanel asm={asm} lang={lang} onLang={changeLang} onClose={() => setPanel(null)} />}
-      {panel === "backlog" && <BacklogPanel asm={asm} lang={lang} onClose={() => setPanel(null)} />}
+      {panelNode}
+      {toastNode}
     </>
   );
 }

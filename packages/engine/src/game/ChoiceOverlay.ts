@@ -37,8 +37,7 @@ export class ChoiceOverlay {
       "align-items:center",
       "justify-content:center",
       "gap:26px",
-      "background:rgba(8,9,14,.35)",
-      "z-index:20",
+      "z-index:6", // 台词窗之上、面板之下(mock/ui.html 层序)
     ].join(";");
     this.#root.append(this.#el);
 
@@ -71,40 +70,19 @@ export class ChoiceOverlay {
     this.#el.textContent = "";
     if (choice.prompt) {
       const p = document.createElement("p");
-      p.className = "gal-choice-prompt";
-      p.style.cssText =
-        "margin:0;padding:12px 34px;border:1px solid rgba(255,255,255,.14);border-radius:999px;" +
-        "background:rgba(12,13,20,.85);color:#f0eef8;font-size:24px;";
+      p.className = "gal-choice-prompt"; // 视觉归 app CSS(mock .choice 语言)
       p.textContent = choice.prompt;
       this.#el.append(p);
     }
     const list = document.createElement("div");
     list.className = "gal-choice-list";
-    list.style.cssText = "display:flex;flex-direction:column;gap:18px;min-width:560px;";
+    list.style.cssText = "display:flex;flex-direction:column;gap:24px;width:700px;max-width:86%;";
     for (const opt of choice.options) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "gal-choice-btn";
       btn.dataset.optionId = opt.id;
-      btn.style.cssText = [
-        "padding:20px 40px",
-        "font-size:26px",
-        "text-align:left",
-        "color:#f0eef8",
-        "background:rgba(16,17,26,.88)",
-        "border:1px solid rgba(255,255,255,.18)",
-        "border-radius:14px",
-        "cursor:pointer",
-        "transition:border-color .15s ease, transform .15s ease",
-      ].join(";");
-      btn.addEventListener("mouseenter", () => {
-        btn.style.borderColor = "#7aa2ff";
-        btn.style.transform = "translateX(6px)";
-      });
-      btn.addEventListener("mouseleave", () => {
-        btn.style.borderColor = "rgba(255,255,255,.18)";
-        btn.style.transform = "";
-      });
+      btn.style.cssText = ["position:relative", "padding:21px 20px 19px", "font-size:27px", "cursor:pointer"].join(";");
       btn.addEventListener("click", () => this.#onPick(opt.id));
       btn.textContent = opt.label;
       list.append(btn);

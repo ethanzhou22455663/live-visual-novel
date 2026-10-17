@@ -81,6 +81,21 @@ describe("M6 skip 演出直通(坑③)", () => {
   });
 });
 
+describe("演出链死锁回归(2026-10-17 浏览器实测)", () => {
+  it("当前行已打完且未被顶替时,晚到的 waitForTypewriter(同行) 必须立即放行", async () => {
+    // 复现:整拍多行快速 commit,演出链(逐句语音)追账时,最后一行的链步
+    // 在打字早已完成后才到——旧实现按 currentLineId 相等走等待路径,无人放行 → 全链挂死
+    const bus = new EventBus();
+    const clock = new PresentationClock();
+    clock.start();
+    const engine = new EngineCore({ bus, clock, stage: fakeStage(), content, textEl: document.createElement("p") });
+    const { lineId } = engine.commitModel({ t: "say", who: "enagi", emotion: "平常", text: "最終行" });
+    engine.advance(); // 补完打字(两段式第一击语义:打字中 = 补完,不 bump 演出版本)
+    await vi.waitFor(() => expect(engine.typewriter.typing).toBe(false));
+    await engine.waitForTypewriter(lineId); // 修复前:这里永久挂起
+  });
+});
+
 describe("M6 stage bgm/se 出口", () => {
   it("commit 转发 onBgm/onSe;replay 不重触发", () => {
     const onBgm = vi.fn();

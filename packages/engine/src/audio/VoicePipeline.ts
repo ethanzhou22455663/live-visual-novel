@@ -46,12 +46,30 @@ export class VoicePipeline {
     return promises.map((promise, i) => ({ clipLineId: `${lineId}#${i}`, promise }));
   }
 
-  /** 演出链步骤:按句序播;单句失败静音继续;abort 即止 */
-  async playOut(entries: VoiceEntry[], signal?: AbortSignal): Promise<void> {
+  /** 当前句立即停(玩家快进用;静音估时等待无 source 可停,由调用方 race 收束) */
+  stopCurrent(): void {
+    this.#channel?.stopCurrent();
+  }
+
+  /**
+   * 演出链步骤:按句序播;单句失败静音继续;abort 即止。
+   * interrupt(玩家点击快进)被观测:未就绪的句子直接放弃,返回 true = 被打断。
+   */
+  async playOut(entries: VoiceEntry[], signal?: AbortSignal, interrupt?: Promise<unknown>): Promise<boolean> {
     for (const entry of entries) {
-      if (signal?.aborted) return;
+      if (signal?.aborted) return false;
+      let clip: ReadyClip;
+      if (interrupt) {
+        const winner = await Promise.race([
+          entry.promise.then((c) => ({ clip: c })),
+          interrupt.then(() => null),
+        ]);
+        if (!winner) return true; // 玩家快进:剩余句放弃(在播句由外层 stopCurrent 收)
+        clip = winner.clip;
+      } else {
+        clip = await entry.promise;
+      }
       try {
-        const clip = await entry.promise;
         this.#bus.emit("voice:state", { lineId: entry.clipLineId, state: "ready" });
         if (!this.#channel) throw new Error("语音通道未解锁");
         this.#bus.emit("voice:state", { lineId: entry.clipLineId, state: "playing" });
@@ -61,6 +79,7 @@ export class VoicePipeline {
         this.#bus.emit("voice:state", { lineId: entry.clipLineId, state: "failed" });
       }
     }
+    return false;
   }
 
   /** narrate / 行尾最小停留 */
