@@ -184,6 +184,15 @@
   transform: scaleX(1);
 }
 
+/* 自动播放开启:accent 常亮(下划线展开+文字提亮) */
+.qbtn.on {
+  color: var(--acc);
+}
+
+.qbtn.on::after {
+  transform: scaleX(1);
+}
+
 /* ---------- 状态角标(左上,极轻;生成中/流式预览) ---------- */
 
 .status-tag {

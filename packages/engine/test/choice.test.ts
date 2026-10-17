@@ -2,8 +2,7 @@
  * M4 选项系统测试:
  * - ChoiceOverlay(DOM):choice:offered 渲染选项;点击 → resolveChoice 生效;resolved → 收起
  * - hidden 后果隔离:不进 DOM、不进 snapshot;resolve 时与自身 delta 合一折叠(clamp)
- * - skip auto-pick:offer 时刻已是 skip / choicing 中切 skip,两条路径都按 defaultOptionId 收束
- * - skipAutoPick:false 时不自动选
+ * - 选项永远停等玩家(2026-10-17 裁决 skip 已移除,不存在任何自动选)
  */
 import { describe, expect, it } from "vitest";
 import type { ContentPort, ModelScriptEvent } from "@gal/shared";
@@ -40,7 +39,7 @@ const CHOICE: ModelScriptEvent = {
   defaultOptionId: "a",
 };
 
-function makeEngine(opts: { skipAutoPick?: boolean } = {}) {
+function makeEngine() {
   const bus = new EventBus();
   const clock = new PresentationClock();
   const root = document.createElement("div");
@@ -52,7 +51,6 @@ function makeEngine(opts: { skipAutoPick?: boolean } = {}) {
     content,
     textEl: document.createElement("p"),
     choiceRoot: root,
-    skipAutoPick: opts.skipAutoPick,
   });
   engine.setPhase("play"); // 泵只在 play 相位显示(生产里由 BeatRunner.run 设置)
   engine.beginTurn();
@@ -96,44 +94,5 @@ describe("ChoiceOverlay", () => {
     const pub = engine.snapshot().pendingChoice!;
     expect(JSON.stringify(pub)).not.toContain("hidden");
     expect(pub.options[0]).toEqual({ id: "a", label: "声をかける", delta: { affection: { enagi: 5 } } });
-  });
-});
-
-describe("skip auto-pick", () => {
-  it("offer 时刻已是 skip → 立即按 defaultOptionId 收束(choice ev 先入账,再落 choice 条目)", () => {
-    const { clock, engine } = makeEngine();
-    clock.setMode("skip");
-
-    engine.commitModel(CHOICE);
-
-    expect(engine.pendingChoice).toBeNull();
-    expect(engine.phase).toBe("play");
-    expect(engine.world.affection.enagi).toBe(100);
-    // 行号:choice 事件 1.0 → 玩家选择条目 1.1(hidden 合一折叠)
-    expect(engine.ledger.map((e) => e.lineId)).toEqual(["1.0", "1.1"]);
-    expect(engine.ledger[1]).toMatchObject({ kind: "choice", optionId: "a" });
-  });
-
-  it("choicing 中切 skip → onModeChange 触发自动选", () => {
-    const { clock, engine } = makeEngine();
-    engine.commitModel(CHOICE);
-    expect(engine.pendingChoice).not.toBeNull();
-
-    clock.setMode("skip");
-
-    expect(engine.pendingChoice).toBeNull();
-    expect(engine.world.affection.enagi).toBe(100);
-  });
-
-  it("skipAutoPick:false → skip 中不自动选,停等玩家", () => {
-    const { clock, engine } = makeEngine({ skipAutoPick: false });
-    clock.setMode("skip");
-
-    engine.commitModel(CHOICE);
-    expect(engine.pendingChoice).not.toBeNull();
-    expect(engine.world.affection.enagi).toBeUndefined();
-
-    engine.resolveChoice("a"); // 玩家手动仍有效
-    expect(engine.world.affection.enagi).toBe(100);
   });
 });

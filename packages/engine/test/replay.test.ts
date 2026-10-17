@@ -69,7 +69,7 @@ describe("EngineCore commit 事务点", () => {
     const shows: string[] = [];
     bus.on("line:commit", (p) => commits.push(p.lineId));
     bus.on("line:show", ({ lineId }) => shows.push(lineId));
-    engine.setClockMode("skip");
+    engine.setClockMode("fast"); // 直通显示(短 dwell)
     engine.beginTurn();
     for (const m of FIXTURE) engine.commitModel(m);
     expect(commits).toEqual(["1.0", "1.1", "1.2", "1.3", "1.4"]); // commit 事务点同步

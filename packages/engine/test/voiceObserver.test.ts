@@ -3,7 +3,7 @@
  * 结构上不可能门控对话节奏——本文件证明其行为合同。
  * - line:show(say) → 切句入队 → ready/playing/done 状态序列
  * - 播中换行 → stopCurrent + 旧句补发 done(BGM ducking 永不卡压低)+ 旧合成 abort
- * - skip/fast 不入队;narrate/未知角色静音
+ * - fast 不入队、auto 正常播;narrate/未知角色静音
  * - 合成悬挂不阻塞、不抛错(display 已与语音彻底解耦,此处证状态面干净)
  */
 import { describe, expect, it, vi } from "vitest";
@@ -95,19 +95,21 @@ describe("VoicePipeline 观察者", () => {
     expect(v.states.filter((s) => s.endsWith("done")).length).toBe(2);
   });
 
-  it("skip/fast 不入队;normal 恢复后照常", async () => {
+  it("fast 不入队、auto 正常播;normal 恢复后照常", async () => {
     const synth = fakeSynth();
     const v = makeVoice(synth, null);
-    v.clock.setMode("skip");
-    v.bus.emit("line:show", { lineId: "1.0", ev: sayEv("す") as never });
     v.clock.setMode("fast");
-    v.bus.emit("line:show", { lineId: "1.1", ev: sayEv("は") as never });
+    v.bus.emit("line:show", { lineId: "1.0", ev: sayEv("す") as never });
     await tick();
     expect(synth.calls).toEqual([]);
+    v.clock.setMode("auto");
+    v.bus.emit("line:show", { lineId: "1.1", ev: sayEv("は") as never }); // auto:语音照常
+    await vi.waitFor(() => expect(synth.calls.length).toBe(1));
+    expect(synth.calls[0]!.lineId).toBe("1.1");
     v.clock.setMode("normal");
     v.bus.emit("line:show", { lineId: "1.2", ev: sayEv("い") as never });
-    await vi.waitFor(() => expect(synth.calls.length).toBe(1));
-    expect(synth.calls[0]!.lineId).toBe("1.2");
+    await vi.waitFor(() => expect(synth.calls.length).toBe(2));
+    expect(synth.calls[1]!.lineId).toBe("1.2");
   });
 
   it("narrate / 未知角色静音:不发状态、不入队", async () => {

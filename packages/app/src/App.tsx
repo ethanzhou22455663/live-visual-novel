@@ -26,6 +26,7 @@ export function App() {
   const [preview, setPreview] = useState("");
   const [status, setStatus] = useState("");
   const [panel, setPanel] = useState<PanelMode | null>(null);
+  const [autoOn, setAutoOn] = useState(false); // 自动播放开关(不持久化,重启回 normal)
   const [autoSave, setAutoSave] = useState<SaveData | null>(null);
   const [lang, setLang] = useState<Lang>(() => loadSettings().lang); // 与 bootstrap 初载同源
   const [toast, setToast] = useState<{ id: number; msg: string } | null>(null);
@@ -38,6 +39,16 @@ export function App() {
   trRef.current = tr;
 
   const showToast = (msg: string): void => setToast({ id: ++toastSeq.current, msg });
+
+  /** 自动播放开关:normal ↔ auto。写 prevMode 防"按住 Ctrl 时点按钮"后松开回错模式 */
+  const toggleAuto = (): void => {
+    if (!asm) return;
+    const clock = asm.engine.clock;
+    const next: ClockMode = clock.mode === "auto" ? "normal" : "auto";
+    prevMode.current = next;
+    clock.setMode(next);
+    setAutoOn(next === "auto");
+  };
 
   useEffect(() => {
     let alive = true;
@@ -188,6 +199,9 @@ export function App() {
         </div>
       )}
       <div className="quick">
+        <button type="button" className={"qbtn" + (autoOn ? " on" : "")} aria-pressed={autoOn} onClick={toggleAuto}>
+          ▶ {tr.auto}
+        </button>
         <button type="button" className="qbtn" onClick={() => setPanel("backlog")}>
           {tr.backlog}
         </button>

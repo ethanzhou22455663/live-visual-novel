@@ -1,7 +1,7 @@
 /**
  * 语音旁路观察者(2026-10-17 显示泵重写):纯 bus 订阅者,结构上不可能再门控任何东西。
  * line:show(say)→ 顶掉在播行(abort 合成 + stopCurrent)→ 切句入队 fire-and-forget。
- * - skip/fast 不入队(显示时刻读 clock.mode;切模式发生在行间,句内由 stopCurrent 收束)
+ * - fast 不入队(显示时刻读 clock.mode;切模式发生在行间,句内由 stopCurrent 收束)
  * - 新行顶掉在播行(经典推进即切音);token 代际在句间检查,句内由 channel.play 的
  *   onended(stopCurrent 触发)收束——每句 play resolve 后必发 done/failed,
  *   BGM ducking 永不卡在压低状态
@@ -23,9 +23,9 @@ export interface VoicePipelineDeps {
   /** null = 无 TTS(测试/纯文本模式),全程静音 */
   synth: VoiceSynthPort | null;
   voiceChannel: VoiceChannel | null;
-  /** 未知角色静音(skip 语音);角色表来自内容包 */
+  /** 未知角色静音;角色表来自内容包 */
   content: ContentPort;
-  /** 显示时刻读模式:skip/fast 静音 */
+  /** 显示时刻读模式:fast 静音(auto 正常播) */
   clock: PresentationClock;
   /** 有语音配置的角色白名单;在册但不在此表 → 静音(主角无配音,2026-10-17 裁决)。
    *  省略 = 不做此过滤(测试)。 */
@@ -72,7 +72,7 @@ export class VoicePipeline {
       return;
     }
     const mode = this.#clock.mode;
-    if (mode === "skip" || mode === "fast") return this.#log(`[${lineId}] 模式 ${mode} → 静音`);
+    if (mode === "fast") return this.#log(`[${lineId}] 模式 fast → 静音`);
     // 新行顶掉在播行:停旧合成、停旧播放;旧句终态由其 playOut 在 play 收束后补发 done
     if (this.#token > 0) this.#log(`[${lineId}] 新行顶旧行 #${this.#token}`);
     this.#lineAbort?.abort();

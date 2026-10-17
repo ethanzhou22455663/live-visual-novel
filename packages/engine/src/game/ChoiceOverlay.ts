@@ -1,7 +1,7 @@
 /**
  * 选项浮层(M4):DOM 实现,engine 持有——React 只做 chrome(标题/HUD)。
  * choice:offered 渲染选项;choice:resolved 或相位离开 choicing 时收起。
- * skip 模式的自动选择归 EngineCore(单一入口 resolveChoice,overlay 只管呈现)。
+ * 选项永远停等玩家(2026-10-17 裁决 skip 已移除,不存在自动选)。
  * 机制样式内联(engine 自足,类名仅作语义钩子,视觉微调走 app CSS 覆盖)。
  */
 import type { PublicChoiceOffer } from "@gal/shared";
@@ -11,7 +11,7 @@ export interface ChoiceOverlayDeps {
   bus: EventBus;
   /** 挂载点(舞台根元素) */
   root: HTMLElement;
-  /** 玩家点选(与 skip 自动选同一入口:EngineCore.resolveChoice) */
+  /** 玩家点选(唯一入口:EngineCore.resolveChoice) */
   onPick(optionId: string): void;
 }
 

@@ -5,7 +5,7 @@
  *
  * 显示泵(commit/显示彻底分离,核心裁决"写剧本然后一句一句对话"):
  * - commitModel 只做状态入账(行号/ledger/line:commit/notify),演出一律入 #queue
- * - 泵逐条消费:line = 打字 + 定步(normal 打完停住**等点击**;auto/fast 停留;skip 直通),
+ * - 泵逐条消费:line = 打字 + 定步(normal 打完停住**等点击**;auto/fast 停留),
  *   stage = 到达时应用(屏幕所见恒等于正在读的行),choice = 到达时 offer 等玩家
  * - advance 两段式(mock 同款手感):打字中 = 补完文本(停留本行);等待中 = 放行下一行;
  *   打字中双击 = 补完即放行(连点不被吞)
@@ -79,8 +79,6 @@ export interface EngineCoreDeps {
   textEl: HTMLElement;
   /** 选项浮层挂载点(舞台根);缺省 = 无浮层(headless 测试/纯引擎用法) */
   choiceRoot?: HTMLElement;
-  /** skip 模式下自动选 defaultOptionId(M4);默认开 */
-  skipAutoPick?: boolean;
   /** 每秒字数(设置面板 M6 可调;默认同 P0) */
   cps?: number;
   /** BGM 指令出口(bootstrap 接 AudioBus;null=stop);不设 = 无声玩法(headless) */
@@ -110,7 +108,6 @@ export class EngineCore {
   #listeners = new Set<() => void>();
   #tw: Typewriter;
   #currentLineId: LineId | null = null;
-  #skipAutoPick: boolean;
   #choiceOverlay: ChoiceOverlay | null = null;
   #onBgm: ((assetId: string | null, fadeMs?: number) => void) | null;
   #onSe: ((assetId: string) => void) | null;
@@ -137,7 +134,6 @@ export class EngineCore {
     this.content = deps.content;
     this.#onBgm = deps.onBgm ?? null;
     this.#onSe = deps.onSe ?? null;
-    this.#skipAutoPick = deps.skipAutoPick ?? true;
     this.#tw = new Typewriter(deps.textEl, { cps: deps.cps ?? 30 });
     this.#tw.onProgress = (ratio) => {
       if (this.#currentLineId) {
@@ -151,13 +147,10 @@ export class EngineCore {
         onPick: (id) => this.resolveChoice(id),
       });
     }
-    // 选项停等中切到 skip → 立即按默认项收束(到达时刻已 skip 的路径在泵里)
+    // 门等待中被切 fast/auto → 立即放行当前行(2026-10-17 裁决:skip 模式已移除,
+    // 选项永远停等玩家,不再有任何自动选)
     this.clock.onModeChange((mode) => {
-      if (mode === "skip" && this.#skipAutoPick && this.#pendingChoice) {
-        this.resolveChoice(this.#pendingChoice.defaultOptionId);
-        return;
-      }
-      if (mode !== "normal") this.#releaseGate(); // 门等待中被切 fast/skip/auto:立即放行当前行
+      if (mode !== "normal") this.#releaseGate();
     });
   }
 
@@ -263,7 +256,7 @@ export class EngineCore {
   /**
    * 提交事务点(§1.4):成员校验/净化 → 补拍号 → ledger → bus line:commit。
    * 演出全部入显示队列(泵逐条消费,见 #drain)——流式生成再快也不扰动画面,
-   * 对话节奏只由玩家点击(或 auto/skip 模式)驱动。不抛错——编剧输出是随机的,
+   * 对话节奏只由玩家点击(或 auto/fast 模式)驱动。不抛错——编剧输出是随机的,
    * 违规一律净化+告警,剧情不断。
    */
   commitModel(m: ModelScriptEvent): { ev: ScriptEvent; lineId: LineId } {
@@ -449,7 +442,7 @@ export class EngineCore {
     }
   }
 
-  /** 一行 = 打字 + 定步。normal:硬点击门(打完停住等点击——"一句一句对话"的核心);fast/auto:停留;skip:直通 */
+  /** 一行 = 打字 + 定步。normal:硬点击门(打完停住等点击——"一句一句对话"的核心);fast/auto:停留 */
   async #showLine(entry: Extract<DisplayEntry, { kind: "line" }>, epoch: number): Promise<boolean> {
     const ev = entry.ev;
     // ① 显示语义:台词表情驱动立绘 + line:show(名牌与语音的入口)。
@@ -465,15 +458,14 @@ export class EngineCore {
     }
     this.bus.emit("line:show", { lineId: entry.lineId, ev });
     this.#notify();
-    // ② 打字(fast/skip 入队即瞬完;打字中点击 → skip + 连点计数)
+    // ② 打字(fast 入队即瞬完;打字中点击 → 补完 + 连点计数)
     const typing = this.#tw.start(ev.text);
-    if (this.clock.mode === "skip" || this.clock.mode === "fast") this.#tw.skip();
+    if (this.clock.mode === "fast") this.#tw.skip();
     if ((await this.#cancellable(epoch, typing)) === null) return false;
     this.bus.emit("typewriter:done", { lineId: entry.lineId });
     this.#notify();
     // ③ 定步:读**当下**模式(不是入队时)
     const mode = this.clock.mode;
-    if (mode === "skip") return true;
     if (this.#armedFor === entry.lineId && this.#armedClicks >= 2) {
       this.#armedFor = null; // 打字中双击:补完即放行
       return true;
@@ -494,12 +486,8 @@ export class EngineCore {
     this.setPhase("choicing");
     this.bus.emit("choice:offered", { choice: entry.offer });
     this.#notify();
-    // 到达时刻已是 skip:按默认项立即收束(resolveChoice 回扫 ledger 取 hidden,事件已入账,天然成立)
-    if (this.#skipAutoPick && this.clock.mode === "skip") {
-      this.resolveChoice(entry.offer.defaultOptionId);
-      return this.#epoch === epoch;
-    }
-    // 停等玩家;resolveChoice 成功后放行(cancel/读档走 #cancellable 退出)
+    // 停等玩家(2026-10-17 裁决:skip 已移除,选项永远手动);resolveChoice 成功后放行
+    // (cancel/读档走 #cancellable 退出)
     const r = await this.#cancellable(epoch, new Promise<void>((res) => this.#choiceWaiters.add(res)));
     return r !== null;
   }

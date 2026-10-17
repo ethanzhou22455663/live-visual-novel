@@ -54,7 +54,8 @@ export interface TtsProvider {
 
 // ---------- 事件总线契约(plan §2.2):全部模块只依赖这个契约互不 import ----------
 
-export type ClockMode = "normal" | "fast" | "skip" | "auto";
+/** 播放模式(2026-10-17 裁决:normal 点击 / fast 按住 Ctrl / auto 自动播放;skip 已移除) */
+export type ClockMode = "normal" | "fast" | "auto";
 
 export interface GameEventMap {
   "engine:phase": { phase: "title" | "play" | "choicing" | "pause" | "menu" | "ending" };
@@ -71,7 +72,6 @@ export interface GameEventMap {
   "line:show": { lineId: LineId; ev: Extract<ScriptEvent, { t: "say" | "narrate" }> };
   /** 显示队列排空(泵空闲):SaveSystem 在此兑现挂起存档;displayedThrough = 最后已看行 */
   "display:drained": { displayedThrough: LineId | null };
-  "line:skip": { lineId: LineId };
   "typewriter:progress": { lineId: LineId; ratio: number };
   "typewriter:done": { lineId: LineId };
   /** 只携带公开视图;hidden 后果仅 resolveChoice 路径可见(plan §1.5) */

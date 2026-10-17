@@ -165,7 +165,7 @@ describe("SaveSystem 往返", () => {
   it("writing 中点:save 受理为 deferred,下一个显示边界(display:drained)落盘且 pendingContinuation", async () => {
     const fake = fakeRunnerState({ running: true, currentBeat: { turnNo: 1, directive: DIRECTIVE }, outlineBeatIndex: 0 });
     const { clock, engine, saves } = makeEnv(new MemoryStorage(), () => fake);
-    clock.setMode("skip"); // 泵直通:commit 后立刻到达显示边界(commit 已遥遥领先于显示)
+    clock.setMode("fast"); // 泵直通(120ms 短 dwell):commit 遥遥领先于显示
     engine.beginTurn();
 
     expect(saves.save("manual-1")).toEqual({ ok: true, deferred: true });
@@ -256,7 +256,7 @@ describe("读档续写(pendingContinuation)", () => {
       outlineBeatIndex: 2,
     });
     const { clock, engine, saves } = makeEnv(new MemoryStorage(), () => fake);
-    clock.setMode("skip"); // 泵直通:显示边界即 commit 边界
+    clock.setMode("fast"); // 泵直通(120ms 短 dwell):显示边界即 commit 边界
     engine.beginTurn();
     engine.commitModel({ t: "narrate", text: "一行目" });
     expect(saves.save("manual-0")).toEqual({ ok: true, deferred: true });

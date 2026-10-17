@@ -2,8 +2,8 @@
  * 显示泵测试(2026-10-17 重写核心):commit/显示分离后的合同。
  * - 显示序=入队序;stage 条目按队列位置生效(屏幕所见=正在读的行)
  * - 两段式 advance(打字中一击=瞬完且停留;再一击=放行);#armedClicks 连点吸收
- * - 模式表:normal 硬点击门(不点不走)/ auto 800ms+点击截断 / fast 瞬完+120ms / skip 有界排空
- * - choice 到达才 offer;skip 到达即自选
+ * - 模式表:normal 硬点击门(不点不走)/ auto 800ms+点击截断 / fast 瞬完+120ms 短停留
+ * - choice 到达才 offer,永远停等玩家(2026-10-17 裁决 skip 已移除)
  * - displayedThrough 游标推进进 toSaveData;whenIdle(+signal abort)
  * - replay 打断:epoch 换代,旧泵退出、旧队列丢弃、新泵接管(死锁回归)
  * - restoreFromSave 队列重建:只重读未读尾部;未决 choice 重新 offer;旧档全量已看
@@ -46,7 +46,7 @@ function fakeStage(): StagePort & { calls: StageCall[]; snaps: unknown[] } {
   };
 }
 
-function makeEngine(opts: { cps?: number; skipAutoPick?: boolean } = {}) {
+function makeEngine(opts: { cps?: number } = {}) {
   const bus = new EventBus();
   const clock = new PresentationClock();
   const stage = fakeStage();
@@ -57,7 +57,6 @@ function makeEngine(opts: { cps?: number; skipAutoPick?: boolean } = {}) {
     content,
     textEl: document.createElement("p"),
     cps: opts.cps ?? 2000, // 默认高字速:一帧打完,把时序焦点留给门控
-    skipAutoPick: opts.skipAutoPick,
   });
   engine.setPhase("play"); // 泵只在 play 相位显示(生产里由 BeatRunner.run 设置)
   const shows: string[] = [];
@@ -77,7 +76,7 @@ const CHOICE: ModelScriptEvent = {
 describe("显示泵:队列与顺序", () => {
   it("显示序=入队序:stage 条目按位置生效,屏幕所见=正在读的行", async () => {
     const { engine, shows, stage } = makeEngine();
-    engine.setClockMode("skip");
+    engine.setClockMode("fast"); // 直通显示(短 dwell),聚焦显示序断言
     engine.beginTurn();
     const FIX: ModelScriptEvent[] = [
       { t: "stage", op: { kind: "bg", asset: "classroom" } },
@@ -169,15 +168,6 @@ describe("显示泵:模式表", () => {
     expect(engine.typewriter.typing).toBe(false);
   });
 
-  it("skip:零点击有界排空 20 行,显示序=入队序", async () => {
-    const { engine, shows } = makeEngine();
-    engine.setClockMode("skip");
-    engine.beginTurn();
-    const ids: string[] = [];
-    for (let i = 0; i < 20; i++) ids.push(engine.commitModel({ t: "narrate", text: `n${i}` }).lineId);
-    await vi.waitFor(() => expect(engine.displayedThrough).toBe(ids[19]!), { timeout: 4000 });
-    expect(shows).toEqual(ids);
-  });
 });
 
 describe("显示泵:选项到达", () => {
@@ -198,24 +188,12 @@ describe("显示泵:选项到达", () => {
     expect(offered).toBe(1);
   });
 
-  it("skip 到达即自选:resolveChoice 走常规事务(world 折叠/ledger 落条目)", async () => {
-    const { engine } = makeEngine();
-    engine.setClockMode("skip");
-    engine.beginTurn();
-    engine.commitModel({ t: "narrate", text: "前置行" });
-    engine.commitModel(CHOICE);
-    await vi.waitFor(() => expect(engine.world.affection.enagi).toBe(5));
-    expect(engine.pendingChoice).toBeNull(); // 自动选完已收束
-    expect(engine.phase).toBe("play");
-    expect(engine.ledger.map((e) => e.lineId)).toEqual(["1.0", "1.1", "1.2"]); // 事件+选择条目
-    expect(engine.ledger[2]).toMatchObject({ kind: "choice", optionId: "a" });
-  });
 });
 
 describe("显示泵:游标与空闲", () => {
   it("displayedThrough 随显示推进,写入 toSaveData", async () => {
     const { engine } = makeEngine();
-    engine.setClockMode("skip");
+    engine.setClockMode("fast");
     engine.beginTurn();
     engine.commitModel({ t: "narrate", text: "一" });
     engine.commitModel({ t: "narrate", text: "二" });
@@ -237,13 +215,10 @@ describe("显示泵:游标与空闲", () => {
     await tick(10);
     expect(idle1).toBe(true);
 
-    engine.setClockMode("skip");
+    engine.setClockMode("fast"); // 模式切换也放行硬门(行早已被 abort 放行,队列空)
     let idle2 = false;
     void engine.whenIdle().then(() => (idle2 = true));
-    engine.advance();
-    await tick();
-    engine.advance(); // 过门 → 队列空 → 排空
-    await vi.waitFor(() => expect(idle2).toBe(true));
+    await vi.waitFor(() => expect(idle2).toBe(true)); // 已排空 → 立即 resolve
   });
 
   it("replay 打断:旧泵退出、旧队列丢弃、新泵接管(epoch 重启,死锁回归)", async () => {

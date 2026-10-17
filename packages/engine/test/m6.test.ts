@@ -1,6 +1,6 @@
 /**
  * M6 合同测试:
- * - 坑③ skip 演出直通:clock.mode==="skip" 时 say 不触发语音(挂起 synth 证明),
+ * - 坑③ fast 演出直通:clock.mode==="fast" 时 say 不触发语音(挂起 synth 证明),
  *   commit/ledger 照常入账,循环顺畅进下一拍(2026-10-17 起语音=纯旁路观察者)
  * - 泵死锁回归:replay 打断打字中的泵,新泵必须能接管(epoch 代际壳)
  * - stage bgm/se 指令 → EngineCore onBgm/onSe 出口(显示时点生效);replay 不重触发
@@ -40,12 +40,12 @@ function fakeStage(): StagePort {
   };
 }
 
-describe("M6 skip 语音旁路(坑③)", () => {
-  it("skip 模式:say 的 line:show 不入队语音(hang synth 永不 resolve 也不拦路),循环进下一拍", async () => {
+describe("M6 fast 语音旁路(坑③)", () => {
+  it("fast 模式:say 的 line:show 不入队语音(hang synth 永不 resolve 也不拦路),循环进下一拍", async () => {
     const bus = new EventBus();
     const clock = new PresentationClock();
     const engine = new EngineCore({ bus, clock, stage: fakeStage(), content, textEl: document.createElement("p") });
-    clock.setMode("skip");
+    clock.setMode("fast");
     // 永不 resolve 的合成:若旁路抑制没生效,playOut 会挂起并发出半截状态
     const hangSynth: VoiceSynthPort = {
       enqueueLine: () => [new Promise<ReadyClip>(() => {})],

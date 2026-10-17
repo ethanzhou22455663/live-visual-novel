@@ -184,7 +184,6 @@ async function assemble(): Promise<Assembled> {
     content,
     textEl,
     choiceRoot: stageEl, // 选项浮层挂舞台内(engine DOM;z-index 6:窗上、面板下)
-    skipAutoPick: true, // skip 模式自动选默认项
     cps: 28,
     // stage bgm/se 指令 → AudioBus;assetId→URL 查 pack.bgm 表(未知 id 告警不拦)
     onBgm: (assetId, fadeMs) => {
