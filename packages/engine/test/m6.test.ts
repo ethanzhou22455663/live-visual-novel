@@ -1,8 +1,9 @@
 /**
  * M6 合同测试:
- * - 坑③ skip 演出直通:clock.mode==="skip" 时 say/narrate 不等语音(hang synth 证明),
- *   commit/ledger 照常入账,循环顺畅进下一拍
- * - stage bgm/se 指令 → EngineCore onBgm/onSe 出口;replay 不重触发(读档走 presentation 权威恢复)
+ * - 坑③ skip 演出直通:clock.mode==="skip" 时 say 不触发语音(挂起 synth 证明),
+ *   commit/ledger 照常入账,循环顺畅进下一拍(2026-10-17 起语音=纯旁路观察者)
+ * - 泵死锁回归:replay 打断打字中的泵,新泵必须能接管(epoch 代际壳)
+ * - stage bgm/se 指令 → EngineCore onBgm/onSe 出口(显示时点生效);replay 不重触发
  * - KeyBindings 滚轮向上 = backlog;面板开时吞掉
  * - VoiceChannel 空音频(SilentProvider)按估时定时等待且串行保序
  */
@@ -40,17 +41,17 @@ function fakeStage(): StagePort {
   };
 }
 
-describe("M6 skip 演出直通(坑③)", () => {
-  it("skip 模式:不等语音(hang synth 永不 resolve 也不拦路),ledger 照常入账,循环进下一拍", async () => {
+describe("M6 skip 语音旁路(坑③)", () => {
+  it("skip 模式:say 的 line:show 不入队语音(hang synth 永不 resolve 也不拦路),循环进下一拍", async () => {
     const bus = new EventBus();
     const clock = new PresentationClock();
     const engine = new EngineCore({ bus, clock, stage: fakeStage(), content, textEl: document.createElement("p") });
     clock.setMode("skip");
-    // 永不 resolve 的合成:若 skip 路径没生效,#drainPresentation 会挂死在 playOut
+    // 永不 resolve 的合成:若旁路抑制没生效,playOut 会挂起并发出半截状态
     const hangSynth: VoiceSynthPort = {
       enqueueLine: () => [new Promise<ReadyClip>(() => {})],
     };
-    const voice = new VoicePipeline({ bus, synth: hangSynth, voiceChannel: null });
+    void new VoicePipeline({ bus, synth: hangSynth, voiceChannel: null, content, clock });
     const story = fakeStory([
       {
         chunks: [
@@ -66,7 +67,7 @@ describe("M6 skip 演出直通(坑③)", () => {
       },
       pad(),
     ]);
-    const runner = new BeatRunner({ engine, bus, story, voice, content, outlineBeatCount: 3 });
+    const runner = new BeatRunner({ engine, bus, story, content, outlineBeatCount: 3 });
     const states: string[] = [];
     bus.on("voice:state", ({ state }) => states.push(state));
 
@@ -76,28 +77,52 @@ describe("M6 skip 演出直通(坑③)", () => {
     await p;
 
     expect(engine.ledger.every((e) => e.kind === "ev")).toBe(true); // commit/fold 照常
-    expect(states).not.toContain("playing"); // 语音根本没被等
+    expect(states).not.toContain("playing"); // 语音根本没被入队
     expect(states).not.toContain("ready");
   });
 });
 
-describe("演出链死锁回归(2026-10-17 浏览器实测)", () => {
-  it("当前行已打完且未被顶替时,晚到的 waitForTypewriter(同行) 必须立即放行", async () => {
-    // 复现:整拍多行快速 commit,演出链(逐句语音)追账时,最后一行的链步
-    // 在打字早已完成后才到——旧实现按 currentLineId 相等走等待路径,无人放行 → 全链挂死
+describe("显示泵死锁回归(2026-10-17 重写)", () => {
+  it("replay 打断打字中的泵:旧泵退出、旧队列丢弃,后续 commit 由新泵接管显示", async () => {
+    // 复现旧缺陷:泵的等待裸挂在 Typewriter.start promise 上(cancel 后永不 resolve),
+    // replay 后 #pumping 永久 true,之后所有 commit 的显示全部死锁。
     const bus = new EventBus();
     const clock = new PresentationClock();
     clock.start();
-    const engine = new EngineCore({ bus, clock, stage: fakeStage(), content, textEl: document.createElement("p") });
-    const { lineId } = engine.commitModel({ t: "say", who: "enagi", emotion: "平常", text: "最終行" });
-    engine.advance(); // 补完打字(两段式第一击语义:打字中 = 补完,不 bump 演出版本)
-    await vi.waitFor(() => expect(engine.typewriter.typing).toBe(false));
-    await engine.waitForTypewriter(lineId); // 修复前:这里永久挂起
+    const engine = new EngineCore({
+      bus,
+      clock,
+      stage: fakeStage(),
+      content,
+      textEl: document.createElement("p"),
+      cps: 2, // 低字速:打字横跨多个 tick
+    });
+    const shows: string[] = [];
+    bus.on("line:show", ({ lineId }) => shows.push(lineId));
+    engine.setPhase("play"); // 泵只在 play 相位显示
+    engine.beginTurn();
+    engine.commitModel({ t: "say", who: "enagi", emotion: "平常", text: "長いセリフ……" });
+    engine.commitModel({ t: "narrate", text: "並んだ二行目" });
+    engine.commitModel({ t: "narrate", text: "並んだ三行目" });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(engine.typewriter.typing).toBe(true); // 首行打字中,后两行在队列里
+
+    engine.replay(engine.ledger); // 读档/回溯打断
+    expect(engine.typewriter.typing).toBe(false);
+    expect(engine.displayedThrough).toBeNull();
+
+    engine.commitModel({ t: "narrate", text: "再開後の行" }); // 旧泵不死锁新泵
+    await new Promise((r) => setTimeout(r, 30));
+    expect(shows).toEqual(["1.0", "1.3"]); // 旧队列(1.1/1.2)被丢弃;新泵显示了新行
+    engine.advance(); // 补完(两段式)
+    await new Promise((r) => setTimeout(r, 30));
+    engine.advance(); // 放行
+    await vi.waitFor(() => expect(engine.displayedThrough).toBe("1.3"));
   });
 });
 
 describe("M6 stage bgm/se 出口", () => {
-  it("commit 转发 onBgm/onSe;replay 不重触发", () => {
+  it("commit 转发 onBgm/onSe(显示时点生效);replay 不重触发", async () => {
     const onBgm = vi.fn();
     const onSe = vi.fn();
     const engine = new EngineCore({
@@ -109,9 +134,11 @@ describe("M6 stage bgm/se 出口", () => {
       onBgm,
       onSe,
     });
+    engine.setPhase("play"); // 泵只在 play 相位显示
     engine.commitModel({ t: "stage", op: { kind: "bgm", action: "play", asset: "bgm-p07" } });
     engine.commitModel({ t: "stage", op: { kind: "bgm", action: "fade", asset: "bgm-p11", fadeMs: 400 } });
     engine.commitModel({ t: "stage", op: { kind: "se", asset: "se-knock" } });
+    await new Promise((r) => setTimeout(r, 0)); // 泵逐条消费:首条同步,余者微任务
     expect(onBgm.mock.calls).toEqual([["bgm-p07", undefined], ["bgm-p11", 400]]);
     expect(onSe).toHaveBeenCalledWith("se-knock");
 

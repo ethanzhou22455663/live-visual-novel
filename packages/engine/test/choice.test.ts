@@ -55,6 +55,7 @@ function makeEngine(opts: { skipAutoPick?: boolean } = {}) {
     choiceRoot: root,
     skipAutoPick: opts.skipAutoPick,
   });
+  engine.setPhase("play"); // 泵只在 play 相位显示(生产里由 BeatRunner.run 设置)
   engine.beginTurn();
   return { bus, clock, root, engine };
 }

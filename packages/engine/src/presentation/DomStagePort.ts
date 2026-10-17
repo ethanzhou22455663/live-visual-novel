@@ -1,7 +1,7 @@
 /**
  * DOM/CSS 舞台实现(P1 裁决 §6;视觉语言移植自 mock/ui.html):
  * - 背景两层 A/B 交叉淡化 .9s(同层换 src 会闪白,故双层)
- * - 立绘 enter:opacity+translateY(36px→0) .65s;槽位 left/center/right = 中央 ±16%
+ * - 立绘 enter:opacity+translateY(36px→0) .65s;槽位 left/center/right = 34%/50%/66% left 锚定
  * - 非发言者 brightness(.6) saturate(.85)
  * - 未知表情 → defaultExpr + warn(坑⑧);图片未载完 → 占位淡入(坑⑭)
  * - 1920×1080 逻辑坐标,外层负责 scale;机制性样式全部内联(engine 自足,类名仅作语义钩子)
@@ -19,10 +19,10 @@ const STAGE_W = 1920;
 const STAGE_H = 1080;
 const SLOT_X: Record<"left" | "center" | "right", number> = { left: 34, center: 50, right: 66 };
 
-/** 立绘定位:bottom 锚定,水平以槽位为中心 */
-function sprTransform(slot: "left" | "center" | "right", enterOffset: boolean): string {
-  return `translate(-50%, ${enterOffset ? "36px" : "0"}) translateX(${SLOT_X[slot] - 50}%)`;
-}
+// 立绘定位(2026-10-17 修复):left:% 锚定槽位(% 相对包含块 = 1920 逻辑宽,语义正确),
+// transform 只做 translate(-50%) 水平居中 + 入场的 36px 落下。
+// 旧实现把槽位写进 translateX(±16%)——CSS 百分比按元素自身宽度解析,收缩包图的元素
+// 上等于把中心钉在舞台 x=0(左半被 overflow:hidden 裁掉),三槽位全部塌在左缘。
 
 class SpriteHandle {
   readonly el: HTMLElement;
@@ -41,22 +41,22 @@ class SpriteHandle {
     this.el.style.cssText = [
       "position:absolute",
       "bottom:0",
-      "left:0",
+      `left:${SLOT_X[this.slot]}%`,
       "height:100%",
       "aspect-ratio:auto",
-      "transition:opacity .65s cubic-bezier(.2,.7,.2,1), transform .65s cubic-bezier(.2,.7,.2,1), filter .35s ease",
+      "transition:opacity .65s cubic-bezier(.2,.7,.2,1), transform .65s cubic-bezier(.2,.7,.2,1), left .65s cubic-bezier(.2,.7,.2,1), filter .35s ease",
     ].join(";");
     this.img = document.createElement("img");
     this.img.alt = who;
     this.img.style.cssText = "height:100%;width:auto;max-width:none;display:block;";
     this.el.append(this.img);
     layer.append(this.el);
-    // enter 动画:下一帧落位
+    // enter 动画:下一帧落位(仅 opacity + 36px 落下;水平居中交给 translate(-50%))
     this.el.style.opacity = "0";
-    this.el.style.transform = sprTransform(this.slot, true);
+    this.el.style.transform = "translate(-50%, 36px)";
     requestAnimationFrame(() => {
       this.el.style.opacity = "1";
-      this.el.style.transform = sprTransform(this.slot, false);
+      this.el.style.transform = "translate(-50%, 0)";
     });
   }
 
@@ -67,7 +67,7 @@ class SpriteHandle {
   moveTo(slot: "left" | "center" | "right"): void {
     if (this.slot === slot) return;
     this.slot = slot;
-    this.el.style.transform = sprTransform(slot, false);
+    this.el.style.left = `${SLOT_X[slot]}%`; // left 过渡平滑移位
   }
 
   setDim(dim: boolean): void {
@@ -78,7 +78,7 @@ class SpriteHandle {
   exit(): void {
     this.el.style.opacity = "0";
     const el = this.el;
-    setTimeout(() => el.remove(), 400);
+    setTimeout(() => el.remove(), 700); // ≥.65s 淡出,不再中途切断(旧 400ms)
   }
 }
 

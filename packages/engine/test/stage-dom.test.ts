@@ -126,13 +126,27 @@ describe("DomStagePort", () => {
     expect(port.snapshot().sprites.enagi).toEqual({ slot: "left", emotion: "笑" });
   });
 
+  it("槽位 left 锚定:34%/50%/66%,水平居中归 translate(-50%)(2026-10-17 修复)", async () => {
+    const { root, port } = makePort();
+    port.sprite({ who: "enagi", action: "enter", slot: "center", emotion: "平常" });
+    const el = root.querySelector<HTMLElement>('[data-who="enagi"]')!;
+    expect(el.style.left).toBe("50%"); // % 相对包含块(1920 逻辑宽),不再按元素自身宽度解析
+    expect(el.style.transform).toContain("translate(-50%");
+    port.sprite({ who: "yukitaka", action: "enter", slot: "left" });
+    const el2 = root.querySelector<HTMLElement>('[data-who="yukitaka"]')!;
+    expect(el2.style.left).toBe("34%");
+    port.sprite({ who: "enagi", action: "diff", slot: "right" });
+    expect(el.style.left).toBe("66%"); // moveTo 走 left 过渡
+    expect(el.style.transition).toContain("left .65s");
+  });
+
   it("exit 移除立绘;speak(null) 不暗化任何人", async () => {
     const { root, port } = makePort();
     port.sprite({ who: "enagi", action: "enter", emotion: "平常" });
     await flushImages();
     port.speak("enagi");
     port.sprite({ who: "enagi", action: "exit" });
-    await new Promise((r) => setTimeout(r, 450)); // 等 exit 的 remove 定时器
+    await new Promise((r) => setTimeout(r, 750)); // 等 exit 的 remove 定时器(≥.65s 淡出,2026-10-17 起 700ms)
     expect(root.querySelector('[data-who="enagi"]')).toBeNull();
   });
 });

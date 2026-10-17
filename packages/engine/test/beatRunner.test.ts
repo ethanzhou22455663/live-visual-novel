@@ -1,11 +1,12 @@
 /**
  * BeatRunner(plan §1.4 主循环)合同测试:
  * - FakeStoryService 脚本化(beatRunnerHarness 共享):lineId 分配、status 序列、大纲游标推进
- * - choice 停等 → resolveChoice → world 折叠(自身+hidden 合一,clamp)→ 循环继续
+ * - choice 走引擎显示泵:泵到达 offer → resolveChoice → world 折叠(自身+hidden 合一,clamp)→ whenIdle 放行
  * - sceneEnd → summarize(names/throughLineId)
  * - aborted(canContinue) → 同拍再入:continuation + ledgerTail
  * - aborted(canContinue:false) → fatal,status error,循环退出
  * 终止姿势:脚本尾部放一个"挂到 signal abort"的 pad 拍,stopGeneration 确定性地停下循环。
+ * 演出(打字/立绘/语音)已归显示泵,runner 测试不点门也照常推进(生成与阅读解耦)。
  */
 import { describe, expect, it, vi } from "vitest";
 import type { StoryChunk } from "@gal/shared";
@@ -25,7 +26,7 @@ function makeRunner(script: ScriptEntry[], cannedSummary?: import("@gal/shared")
     textEl: document.createElement("p"),
   });
   const story = fakeStory(script, cannedSummary);
-  const runner = new BeatRunner({ engine, bus, story, voice: null, content, outlineBeatCount: 3 });
+  const runner = new BeatRunner({ engine, bus, story, content, outlineBeatCount: 3 });
   return { engine, bus, story, runner };
 }
 
@@ -145,7 +146,7 @@ describe("BeatRunner", () => {
       textEl: document.createElement("p"),
     });
     const story = fakeStory([{ chunks: [{ kind: "aborted", reason: "LLM 流失败", canContinue: false }] }]);
-    const runner = new BeatRunner({ engine, bus, story, voice: null, content, outlineBeatCount: 3 });
+    const runner = new BeatRunner({ engine, bus, story, content, outlineBeatCount: 3 });
     const statuses: string[] = [];
     bus.on("generation:status", (s) => statuses.push(s.phase));
 

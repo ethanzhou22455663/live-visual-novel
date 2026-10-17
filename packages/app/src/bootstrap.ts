@@ -43,7 +43,7 @@ export interface Assembled {
   startFromSave(save: SaveData): Promise<void>;
   /** 游戏中读档(菜单):停旧循环 → 恢复 → 起新循环 */
   continueFrom(save: SaveData): Promise<void>;
-  /** 停止生成:abort + 打字机取消;已提交行保留生效 */
+  /** 停止生成:只 abort;已提交行保留,继续按玩家节奏显示 */
   stop(): void;
   warnings: string[];
 }
@@ -210,14 +210,14 @@ async function assemble(): Promise<Assembled> {
     else if (state === "done" || state === "failed" || state === "muted") audio.duckBgm(false);
   });
 
-  // ---- 台词窗接线(mock 同款):commit 更新名牌并熄 ▼,打字完点亮 ▼,相位管窗体显隐 ----
-  bus.on("line:commit", ({ event }) => {
+  // ---- 台词窗接线(mock 同款):line:show(泵显示行)更新名牌并熄 ▼,打字完点亮 ▼ ----
+  bus.on("line:show", ({ ev }) => {
     nextEl.classList.remove("on");
-    if (event.t === "say") {
-      plateNm.textContent = content.displayNameOf(event.who);
-      plateEl.style.setProperty("--pc", pack.characters[event.who]?.color || "");
+    if (ev.t === "say") {
+      plateNm.textContent = content.displayNameOf(ev.who);
+      plateEl.style.setProperty("--pc", pack.characters[ev.who]?.color || "");
       plateEl.classList.add("on");
-    } else if (event.t === "narrate") {
+    } else if (ev.t === "narrate") {
       plateEl.classList.remove("on"); // 旁白无名牌(mock 同款)
     }
   });
@@ -281,6 +281,11 @@ async function assemble(): Promise<Assembled> {
     synth = new AppVoiceSynth(new SynthQueue(router));
   }
 
+  // 语音 = 纯旁路观察者(2026-10-17 泵重写):只订阅 line:show,结构上不可能门控对话节奏
+  if (synth) {
+    void new VoicePipeline({ bus, synth, voiceChannel: audio.voiceChannel, content, clock });
+  }
+
   // ---- 导演/编剧/摘要(同一条 LLM 连接) ----
   const story = createStoryService({
     llm: new DeepseekClient({ apiKey: "", baseUrl: "/llm" }), // dev:key 由 Vite proxy 注入
@@ -300,7 +305,6 @@ async function assemble(): Promise<Assembled> {
       engine,
       bus,
       story,
-      voice: synth ? new VoicePipeline({ bus, synth, voiceChannel: audio.voiceChannel }) : null,
       content,
       outlineBeatCount: outlineBeatCount(pack.story.outlineMd),
       onError: (e) => {
@@ -312,10 +316,14 @@ async function assemble(): Promise<Assembled> {
     return runner;
   };
 
-  // 名牌是 line:commit 驱动的;读档 replay 不发该事件 → 从 ledger 尾部补同步
+  // 名牌是 line:show 驱动的;读档 restoreFromSave 的已看前缀 replay 不发该事件 →
+  // 按 displayedThrough 扫 ledger 补同步(未读尾部由泵逐行显示时自然接上)
   const syncNamePlate = (): void => {
-    for (let i = engine.ledger.length - 1; i >= 0; i--) {
-      const e = engine.ledger[i]!;
+    if (!engine.displayedThrough) {
+      plateEl.classList.remove("on");
+      return;
+    }
+    for (const e of engine.ledger) {
       if (e.kind !== "ev") continue;
       if (e.ev.t === "say") {
         plateNm.textContent = content.displayNameOf(e.ev.who);
@@ -324,7 +332,7 @@ async function assemble(): Promise<Assembled> {
       } else if (e.ev.t === "narrate") {
         plateEl.classList.remove("on");
       }
-      break;
+      if (e.lineId === engine.displayedThrough) break;
     }
   };
 

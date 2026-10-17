@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ContentPort } from "@gal/shared";
 import type { ModelScriptEvent } from "@gal/shared";
 import { EngineCore } from "../src/core/EngineCore.ts";
@@ -39,6 +39,7 @@ function makeEngine(stage = fakeStage()) {
   const textEl = document.createElement("p");
   const deps: StageDeps = { root, resolve: () => null, content, warn: () => {} };
   const engine = new EngineCore({ bus, clock: new PresentationClock(), stage, content, textEl });
+  engine.setPhase("play"); // 泵只在 play 相位显示(生产里由 BeatRunner.run 设置)
   // 拦截 warn 走 StageDeps.warn 的场景已由 stage 测试覆盖;这里只测 engine 自己的告警
   return { engine, bus, stage };
 }
@@ -63,15 +64,20 @@ describe("EngineCore commit 事务点", () => {
     expect(engine.ledger.length).toBe(6);
   });
 
-  it("bus 序列:每条 commit 发 line:commit;say/narrate 驱动 speak 与打字机", () => {
+  it("bus 序列:commit 同步发 line:commit;泵显示时发 line:show 并驱动 speak", async () => {
     const { engine, bus, stage } = makeEngine();
     const commits: string[] = [];
+    const shows: string[] = [];
     bus.on("line:commit", (p) => commits.push(p.lineId));
+    bus.on("line:show", ({ lineId }) => shows.push(lineId));
+    engine.setClockMode("skip");
     engine.beginTurn();
     for (const m of FIXTURE) engine.commitModel(m);
-    expect(commits).toEqual(["1.0", "1.1", "1.2", "1.3", "1.4"]);
+    expect(commits).toEqual(["1.0", "1.1", "1.2", "1.3", "1.4"]); // commit 事务点同步
+    await vi.waitFor(() => expect(engine.displayedThrough).toBe("1.4")); // 泵排空
+    expect(shows).toEqual(["1.1", "1.2", "1.4"]); // stage 指令不占 line:show
     const speakCalls = stage.calls.filter((c) => c.op === "speak").map((c) => c.args[0]);
-    expect(speakCalls).toEqual(["enagi", null, "enagi"]); // bg/sprite 指令不触发 speak
+    expect(speakCalls).toEqual(["enagi", null, "enagi"]); // 显示时刻驱动,顺序不变
   });
 
   it("未知表情净化为 defaultExpr 并发 engine:warning;ledger 存净化后事件", () => {
@@ -86,7 +92,7 @@ describe("EngineCore commit 事务点", () => {
     expect(stored.kind === "ev" && stored.ev.t === "say" && stored.ev.emotion).toBe("平常");
   });
 
-  it("选项提交:phase→choicing、choice:offered 只带公开视图、世界状态按 delta 折叠", () => {
+  it("选项提交:泵到达后 phase→choicing、choice:offered 只带公开视图、世界状态按 delta 折叠", async () => {
     const { engine, bus } = makeEngine();
     let offered: unknown = null;
     bus.on("choice:offered", (p) => (offered = p.choice));
@@ -100,6 +106,8 @@ describe("EngineCore commit 事务点", () => {
       ],
       defaultOptionId: "a",
     });
+    // 泵第一个条目同步消费到 offer(await 前的同步段),但稳健起见仍等到达
+    await vi.waitFor(() => expect(engine.pendingChoice).not.toBeNull());
     expect(engine.phase).toBe("choicing");
     expect(engine.pendingChoice).not.toBeNull();
     expect(offered).not.toBeNull();

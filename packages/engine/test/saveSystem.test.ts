@@ -7,7 +7,7 @@
  * - 摘要裁剪:summarizedThroughLineId 之后的行才入档;裁剪清空 ledger 时读档后 beginTurn 仍前进
  * - 读档续写:pendingContinuation ⇒ 下一轮 run() 跳过导演,同拍续号(1.0 → 1.1),ledgerTail 可见
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { EMPTY_SUMMARY, StorageQuotaError } from "@gal/shared";
 import type {
   BeatDirective,
@@ -80,15 +80,17 @@ class QuotaStorage extends MemoryStorage {
 /** engine+bus+SaveSystem 一体;getRunner 注入模拟 runner(中点存档/摘要裁剪用) */
 function makeEnv(storage: StoragePort = new MemoryStorage(), getRunner?: () => BeatRunner | null) {
   const bus = new EventBus();
+  const clock = new PresentationClock();
   const engine = new EngineCore({
     bus,
-    clock: new PresentationClock(),
+    clock,
     stage: fakeStage(),
     content,
     textEl: document.createElement("p"),
   });
   const saves = new SaveSystem({ engine, bus, storage, getRunner });
-  return { bus, engine, saves, storage };
+  engine.setPhase("play"); // 泵只在 play 相位显示(生产里由 BeatRunner.run 设置)
+  return { bus, clock, engine, saves, storage };
 }
 
 /** 中点/裁剪用的假 runner:只暴露 SaveSystem 读取的四个成员 */
@@ -131,7 +133,7 @@ function makeRunnerEnv(save: SaveData, chunks: (req: GenerateBeatRequest) => Sto
       return Promise.reject(new Error("summarize は本テストで呼ばれない"));
     },
   };
-  const runner = new BeatRunner({ engine, bus, story, voice: null, content, outlineBeatCount: null });
+  const runner = new BeatRunner({ engine, bus, story, content, outlineBeatCount: null });
   const saves = new SaveSystem({ engine, bus, storage: new MemoryStorage(), getRunner: () => runner });
   saves.continueFrom(save);
   return { engine, runner, nextCalls, genReqs };
@@ -161,15 +163,17 @@ describe("SaveSystem 往返", () => {
     expect(engine.phase).toBe("play");
   });
 
-  it("writing 中点:save 受理为 deferred,下一个 line:commit 落盘且 pendingContinuation", () => {
+  it("writing 中点:save 受理为 deferred,下一个显示边界(display:drained)落盘且 pendingContinuation", async () => {
     const fake = fakeRunnerState({ running: true, currentBeat: { turnNo: 1, directive: DIRECTIVE }, outlineBeatIndex: 0 });
-    const { engine, saves } = makeEnv(new MemoryStorage(), () => fake);
+    const { clock, engine, saves } = makeEnv(new MemoryStorage(), () => fake);
+    clock.setMode("skip"); // 泵直通:commit 后立刻到达显示边界(commit 已遥遥领先于显示)
     engine.beginTurn();
 
     expect(saves.save("manual-1")).toEqual({ ok: true, deferred: true });
     expect(saves.load("manual-1").data).toBeNull(); // 尚未落盘
 
-    engine.commitModel({ t: "narrate", text: "行境界" }); // line:commit → 兑现
+    engine.commitModel({ t: "narrate", text: "行境界" }); // 泵排空 → 兑现
+    await vi.waitFor(() => expect(saves.load("manual-1").data).not.toBeNull());
 
     const { data } = saves.load("manual-1");
     expect(data).not.toBeNull();
@@ -252,11 +256,13 @@ describe("读档续写(pendingContinuation)", () => {
       currentBeat: { turnNo: 1, directive: DIRECTIVE },
       outlineBeatIndex: 2,
     });
-    const { engine, saves } = makeEnv(new MemoryStorage(), () => fake);
+    const { clock, engine, saves } = makeEnv(new MemoryStorage(), () => fake);
+    clock.setMode("skip"); // 泵直通:显示边界即 commit 边界
     engine.beginTurn();
     engine.commitModel({ t: "narrate", text: "一行目" });
     expect(saves.save("manual-0")).toEqual({ ok: true, deferred: true });
     engine.commitModel({ t: "narrate", text: "行境界" }); // deferred 兑现(同时也提交了 1.1)
+    await vi.waitFor(() => expect(saves.load("manual-0").data).not.toBeNull());
     const save = saves.load("manual-0").data!;
     expect(save.pendingContinuation).toBe(true);
 

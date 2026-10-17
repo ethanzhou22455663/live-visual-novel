@@ -1,14 +1,20 @@
 /**
- * 语音演出链(plan §1.7 / P0 p0run 拆解):commit 即入队(行级流水线),
- * 打字机完 → 逐句 play → 最短停留。合成失败该句静音降级,文本照走。
+ * 语音旁路观察者(2026-10-17 显示泵重写):纯 bus 订阅者,结构上不可能再门控任何东西。
+ * line:show(say)→ 顶掉在播行(abort 合成 + stopCurrent)→ 切句入队 fire-and-forget。
+ * - skip/fast 不入队(显示时刻读 clock.mode;切模式发生在行间,句内由 stopCurrent 收束)
+ * - 新行顶掉在播行(经典推进即切音);token 代际在句间检查,句内由 channel.play 的
+ *   onended(stopCurrent 触发)收束——每句 play resolve 后必发 done/failed,
+ *   BGM ducking 永不卡在压低状态
+ * - 合成失败该句静音降级,文本照走;合成悬挂只泄漏一个 pending promise,不阻塞显示
  * 切句归 VoiceSynthPort 实现(app 组装 splitSentences→SynthQueue→TtsRouter)。
  */
-import type { LineId, ReadyClip, VoiceSynthPort } from "@gal/shared";
+import type { ContentPort, EnqueueLineRequest, ReadyClip, VoiceSynthPort } from "@gal/shared";
+import type { PresentationClock } from "../core/PresentationClock.ts";
 import type { EventBus } from "../core/EventBus.ts";
 import type { VoiceChannel } from "../VoiceChannel.ts";
 
 export interface VoiceEntry {
-  clipLineId: LineId;
+  clipLineId: string;
   promise: Promise<ReadyClip>;
 }
 
@@ -17,73 +23,83 @@ export interface VoicePipelineDeps {
   /** null = 无 TTS(测试/纯文本模式),全程静音 */
   synth: VoiceSynthPort | null;
   voiceChannel: VoiceChannel | null;
+  /** 未知角色静音(skip 语音);角色表来自内容包 */
+  content: ContentPort;
+  /** 显示时刻读模式:skip/fast 静音 */
+  clock: PresentationClock;
 }
-
-const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export class VoicePipeline {
   #bus: EventBus;
   #synth: VoiceSynthPort | null;
   #channel: VoiceChannel | null;
+  #content: ContentPort;
+  #clock: PresentationClock;
+  /** 行代际:新行顶旧行(合成 signal + 句间检查都用它) */
+  #lineAbort: AbortController | null = null;
+  #token = 0;
 
   constructor(deps: VoicePipelineDeps) {
     this.#bus = deps.bus;
     this.#synth = deps.synth;
     this.#channel = deps.voiceChannel;
+    this.#content = deps.content;
+    this.#clock = deps.clock;
+    // 唯一入口:泵显示台词行时触发(replay 不发 line:show,读档静音,天然正确)
+    deps.bus.on("line:show", ({ lineId, ev }) => {
+      if (ev.t === "say") this.#speak(ev.who, ev.text, lineId);
+    });
   }
 
-  /** commit 时调用(不等演出):Port 内部切句,返回与句序一致的就绪 promise */
-  enqueue(say: { who: string; text: string }, lineId: LineId, signal?: AbortSignal): VoiceEntry[] {
-    if (!this.#synth) return [];
-    const promises = this.#synth.enqueueLine({
+  #speak(who: string, text: string, lineId: string): void {
+    if (!this.#synth) return;
+    if (!this.#content.characterIds.has(who)) return; // 未知角色静音
+    const mode = this.#clock.mode;
+    if (mode === "skip" || mode === "fast") return;
+    // 新行顶掉在播行:停旧合成、停旧播放;旧句终态由其 playOut 在 play 收束后补发 done
+    this.#lineAbort?.abort();
+    this.#channel?.stopCurrent();
+    const signal = (this.#lineAbort = new AbortController()).signal;
+    const token = ++this.#token;
+    const req: EnqueueLineRequest = {
       lineId,
-      text: say.text,
-      speaker: say.who,
-      configId: say.who,
+      text,
+      speaker: who,
+      configId: who, // 即角色 charId(plan §2.8)
       speed: 1,
       signal,
-    });
-    return promises.map((promise, i) => ({ clipLineId: `${lineId}#${i}`, promise }));
+    };
+    const entries = this.#synth.enqueueLine(req).map((promise, i) => ({
+      clipLineId: `${lineId}#${i}`,
+      promise,
+    }));
+    void this.#playOut(entries, token);
   }
 
-  /** 当前句立即停(玩家快进用;静音估时等待无 source 可停,由调用方 race 收束) */
-  stopCurrent(): void {
-    this.#channel?.stopCurrent();
-  }
-
-  /**
-   * 演出链步骤:按句序播;单句失败静音继续;abort 即止。
-   * interrupt(玩家点击快进)被观测:未就绪的句子直接放弃,返回 true = 被打断。
-   */
-  async playOut(entries: VoiceEntry[], signal?: AbortSignal, interrupt?: Promise<unknown>): Promise<boolean> {
+  /** 按句序播;单句失败静音继续;被新行顶掉(token 变)即止。终态必发,ducking 不卡 */
+  async #playOut(entries: VoiceEntry[], token: number): Promise<void> {
     for (const entry of entries) {
-      if (signal?.aborted) return false;
+      if (token !== this.#token) return; // 句间:已被新行顶掉,剩余句放弃
       let clip: ReadyClip;
-      if (interrupt) {
-        const winner = await Promise.race([
-          entry.promise.then((c) => ({ clip: c })),
-          interrupt.then(() => null),
-        ]);
-        if (!winner) return true; // 玩家快进:剩余句放弃(在播句由外层 stopCurrent 收)
-        clip = winner.clip;
-      } else {
-        clip = await entry.promise;
-      }
       try {
-        this.#bus.emit("voice:state", { lineId: entry.clipLineId, state: "ready" });
+        clip = await entry.promise;
+      } catch {
+        this.#bus.emit("voice:state", { lineId: entry.clipLineId, state: "failed" });
+        continue;
+      }
+      if (token !== this.#token) return;
+      this.#bus.emit("voice:state", { lineId: entry.clipLineId, state: "ready" });
+      try {
         if (!this.#channel) throw new Error("语音通道未解锁");
         this.#bus.emit("voice:state", { lineId: entry.clipLineId, state: "playing" });
         await this.#channel.play(clip);
-        this.#bus.emit("voice:state", { lineId: entry.clipLineId, state: "done" });
       } catch {
         this.#bus.emit("voice:state", { lineId: entry.clipLineId, state: "failed" });
+        continue;
       }
+      // play 已收束(自然播完或被 stopCurrent 切断):必发终态
+      this.#bus.emit("voice:state", { lineId: entry.clipLineId, state: "done" });
+      if (token !== this.#token) return;
     }
-    return false;
-  }
-
-  /** narrate / 行尾最小停留 */
-  async dwell(ms = 400): Promise<void> {
-    await delay(ms);
   }
 }

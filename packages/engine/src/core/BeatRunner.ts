@@ -1,7 +1,9 @@
 /**
  * BeatRunner(plan §1.4):beat 主循环,engine 侧唯一"驾驶者"。
  * nextBeat → beginTurn → generateBeat 逐块消费 → commit 事务点 → 选项停等 →
- * sceneEnd 摘要 → 循环。打断 = abort + 打字机取消,已提交行保留生效。
+ * sceneEnd 摘要 → 循环。演出(打字/立绘/语音)全部归引擎显示泵(2026-10-17 重写):
+ * runner 只 commit 状态,选项拍等 engine.whenIdle(泵到达→offer→玩家选)。
+ * 打断 = 只 abort 生成;已提交行保留,继续按玩家节奏显示。
  * summary/outlineBeatIndex 由 runner 持有(M5 起入 SaveData)。
  */
 import type {
@@ -16,17 +18,13 @@ import type {
 import { EMPTY_SUMMARY, toHistoryItems } from "@gal/shared";
 import type { EngineCore } from "./EngineCore.ts";
 import type { EventBus } from "./EventBus.ts";
-import type { VoicePipeline } from "../audio/VoicePipeline.ts";
 
 const HISTORY_CAP = 30;
-
-const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export interface BeatRunnerDeps {
   engine: EngineCore;
   bus: EventBus;
   story: StoryService;
-  voice: VoicePipeline | null;
   content: ContentPort;
   /** 大纲节拍数(app 从 pack.story.outlineMd 算;null=无结构,游标恒 null) */
   outlineBeatCount: number | null;
@@ -41,8 +39,6 @@ export class BeatRunner {
   #summary: Summary = EMPTY_SUMMARY;
   /** 摘要游标:上次 summarize 覆盖到的 lineId("" = 从未摘要) */
   #summarizedThrough: string = "";
-  /** 选项停等句柄 */
-  #choiceWaiter: (() => void) | null = null;
   /** 进行中的拍(writing 中点存档的 pendingContinuation 依据;拍边界为 null) */
   #currentBeat: SaveCurrentBeat | null = null;
   /** 读档续写:下一轮循环跳过导演,直接用存档里的拍指令(引擎已 resumeTurn) */
@@ -51,11 +47,6 @@ export class BeatRunner {
   constructor(deps: BeatRunnerDeps) {
     this.#deps = deps;
     this.#outlineBeatIndex = deps.outlineBeatCount === null ? null : 0;
-    deps.bus.on("choice:resolved", () => {
-      const w = this.#choiceWaiter;
-      this.#choiceWaiter = null;
-      w?.();
-    });
   }
 
   get running(): boolean {
@@ -75,13 +66,9 @@ export class BeatRunner {
     return this.#currentBeat;
   }
 
-  /** 打断当前生成(ESC/停止):abort + 打字机取消;已提交行保留。循环在行边界退出 */
+  /** 打断当前生成(ESC/停止):只 abort LLM;不动显示泵——已提交行保留,按玩家节奏继续显示 */
   stopGeneration(): void {
     this.#abort?.abort();
-    this.#deps.engine.cancelTypewriter();
-    const w = this.#choiceWaiter;
-    this.#choiceWaiter = null;
-    w?.(); // 选项等待也放行;循环检查 aborted 后退出
   }
 
   /** 新游戏:清空 ledger/摘要/游标,回 title 相位等待 start */
@@ -172,7 +159,7 @@ export class BeatRunner {
 
   /** 消费一拍;返回收束方式,"fatal" = 不可续的失败 */
   async #consumeBeat(directive: BeatDirective, turnNo: number, abort: AbortController): Promise<"choice" | "beatEnd" | "sceneEnd" | "fatal"> {
-    const { engine, bus, story, voice, content } = this.#deps;
+    const { engine, bus, story } = this.#deps;
     let continuation: { reason: string; count: number } | undefined;
     let reentries = 0;
 
@@ -180,6 +167,7 @@ export class BeatRunner {
       const ledgerTail = this.#beatTail();
       let done: Extract<StoryChunk, { kind: "done" }> | null = null;
       let sawFatalAbort = false;
+      let sawChoice = false; // 本拍 commit 过 choice 事件(到达时由泵 offer,whenIdle 等玩家)
 
       const stream = story.generateBeat({
         directive,
@@ -199,13 +187,9 @@ export class BeatRunner {
             bus.emit("generation:preview", { text: chunk.text });
             break;
           case "commit": {
-            const { ev, lineId } = engine.commitModel(chunk.event);
-            if (ev.t === "say" && voice && content.characterIds.has(ev.who)) {
-              const entries = voice.enqueue(ev, lineId, abort.signal);
-              this.#chain(() => this.#presentSay(lineId, entries, abort.signal));
-            } else if (ev.t === "narrate") {
-              this.#chain(() => this.#presentNarrate(lineId, abort.signal));
-            }
+            // 状态入账即返回;演出(打字/立绘/语音)归引擎显示泵,这里不等任何演出
+            const { ev } = engine.commitModel(chunk.event);
+            if (ev.t === "choice") sawChoice = true;
             break;
           }
           case "aborted":
@@ -230,73 +214,16 @@ export class BeatRunner {
         continue;
       }
 
-      // 演出链收尾:最后一行打完/播完才进选项或下一拍
-      await this.#drainPresentation();
-
-      if (done?.result === "choice" && engine.pendingChoice) {
+      // choice 拍:等泵到达选项条目并收束玩家选择(硬逻辑门;abort 由 signal 提前放行)。
+      // beatEnd/sceneEnd 不等显示——下一拍 LLM 生成与玩家阅读流水并行,显示队列吸收延迟。
+      if (done?.result === "choice" && sawChoice) {
         bus.emit("generation:status", { phase: "choicing", turnNo });
-        await this.#waitChoice(abort.signal);
+        await engine.whenIdle(abort.signal);
         return abort.signal.aborted ? "beatEnd" : "choice";
       }
       if (done) return done.result;
       return "beatEnd"; // 两次续写仍未收束:按拍尾处理,剧情不断
     }
-  }
-
-  /** 行级流水线:打字机完 → 语音逐句 → 停留(不阻塞流消费;点击可快进) */
-  async #presentSay(lineId: string, entries: ReturnType<VoicePipeline["enqueue"]>, signal: AbortSignal): Promise<void> {
-    const { engine, voice } = this.#deps;
-    if (!voice) return;
-    const mode = engine.clock.mode;
-    // 坑③:skip/fast 演出直通——瞬间补完打字机、不等语音;commit/fold 已照常入账
-    if (mode === "skip" || mode === "fast") {
-      engine.advance();
-      return;
-    }
-    try {
-      await engine.waitForTypewriter(lineId);
-      if (signal.aborted) return;
-      // 玩家第二击(等待中点击)= 快进:停当前句、放弃余句、跳过停留
-      const v0 = engine.presentationVersion;
-      const interrupt = engine.waitPresentationSkip(v0);
-      const skipped = await Promise.race([
-        voice.playOut(entries, signal, interrupt).then(() => false),
-        interrupt.then(() => true),
-      ]);
-      if (skipped) voice.stopCurrent();
-      await Promise.race([interrupt, delay(mode === "auto" ? 800 : 400)]);
-    } catch (e) {
-      this.#deps.onError?.(e);
-    }
-  }
-
-  async #presentNarrate(lineId: string, signal: AbortSignal): Promise<void> {
-    const { engine, voice } = this.#deps;
-    const mode = engine.clock.mode;
-    if (mode === "skip" || mode === "fast") {
-      engine.advance();
-      return;
-    }
-    if (!voice || signal.aborted) return;
-    try {
-      await engine.waitForTypewriter(lineId);
-      if (signal.aborted) return;
-      const v0 = engine.presentationVersion;
-      await Promise.race([engine.waitPresentationSkip(v0), delay(mode === "auto" ? 800 : 400)]);
-    } catch (e) {
-      this.#deps.onError?.(e);
-    }
-  }
-
-  #presentation: Promise<void> = Promise.resolve();
-
-  /** 演出链顺序化;drain = 等全部排队的行演出完 */
-  async #drainPresentation(): Promise<void> {
-    await this.#presentation.catch(() => {});
-  }
-
-  #chain(step: () => Promise<void>): void {
-    this.#presentation = this.#presentation.then(step).catch((e) => this.#deps.onError?.(e));
   }
 
   #history(): HistoryItem[] {
@@ -323,14 +250,6 @@ export class BeatRunner {
       }
     }
     return lines.join("\n");
-  }
-
-  async #waitChoice(signal: AbortSignal): Promise<void> {
-    if (!signal.aborted && this.#deps.engine.pendingChoice) {
-      await new Promise<void>((res) => {
-        this.#choiceWaiter = res;
-      });
-    }
   }
 
   /** sceneEnd 摘要(§3):失败沿用旧摘要 */

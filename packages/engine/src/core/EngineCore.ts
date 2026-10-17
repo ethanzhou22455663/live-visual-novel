@@ -1,7 +1,16 @@
 /**
- * EngineCore(plan §2.2 / M2):游戏状态唯一持有者——ledger、游标、phase 状态机、
- * 模型事件提交事务点。副作用只经 EventBus 与端口;DOM 仅打字机目标元素。
- * BeatRunner(M3)是唯一"驾驶者";React 经 snapshot/subscribe 只读。
+ * EngineCore(2026-10-17 显示泵重写):游戏状态唯一持有者——ledger、游标、phase 状态机、
+ * 模型事件提交事务点、显示队列泵。副作用只经 EventBus 与端口;DOM 仅打字机目标元素。
+ * BeatRunner 是唯一"驾驶者";React 经 snapshot/subscribe 只读。
+ *
+ * 显示泵(commit/显示彻底分离,核心裁决"写剧本然后一句一句对话"):
+ * - commitModel 只做状态入账(行号/ledger/line:commit/notify),演出一律入 #queue
+ * - 泵逐条消费:line = 打字 + 定步(normal 打完停住**等点击**;auto/fast 停留;skip 直通),
+ *   stage = 到达时应用(屏幕所见恒等于正在读的行),choice = 到达时 offer 等玩家
+ * - advance 两段式(mock 同款手感):打字中 = 补完文本(停留本行);等待中 = 放行下一行;
+ *   打字中双击 = 补完即放行(连点不被吞)
+ * - 取消用 epoch 代际:replay/newGame 令旧泵退出;泵的一切等待过 #cancellable 壳,
+ *   绝不挂在被 cancel 的 Typewriter(其 start promise 永不 resolve)上
  *
  * 拍号语义(§1.1):turnNo=拍号(1 起),seq=拍内序号(0 起);
  * beginTurn 分配新拍号,同拍续写用 resumeTurn 续 seq,行号单调不重复。
@@ -43,6 +52,12 @@ import { Typewriter } from "../Typewriter.ts";
 
 export type EnginePhase = GameEventMap["engine:phase"]["phase"];
 
+/** 显示队列条目:commit 入队,泵按序消费(演出与生成的解耦边界) */
+export type DisplayEntry =
+  | { kind: "line"; lineId: LineId; ev: Extract<ScriptEvent, { t: "say" | "narrate" }> }
+  | { kind: "stage"; lineId: LineId; op: Extract<ScriptEvent, { t: "stage" }>["op"] }
+  | { kind: "choice"; lineId: LineId; offer: PublicChoiceOffer };
+
 /** React useSyncExternalStore 的只读视图(hidden 永不出现在此) */
 export interface EngineSnapshot {
   phase: EnginePhase;
@@ -53,7 +68,7 @@ export interface EngineSnapshot {
   world: WorldState;
   pendingChoice: PublicChoiceOffer | null;
   lineCount: number;
-  /** 当前发言者(名牌;null=旁白/尚无行) */
+  /** 当前发言者(名牌;null=旁白/尚无行)——泵显示时点更新 */
   currentLine: { who: string; emotion: string } | null;
 }
 
@@ -75,6 +90,11 @@ export interface EngineCoreDeps {
   onSe?: (assetId: string) => void;
 }
 
+const AUTO_DWELL_MS = 800; // auto 模式行间停留(沿旧值)
+const FAST_DWELL_MS = 120; // fast(Ctrl)行间停留:防止百行同帧刷完导致事件风暴
+
+const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 export class EngineCore {
   readonly bus: EventBus;
   readonly clock: PresentationClock;
@@ -92,14 +112,26 @@ export class EngineCore {
   #listeners = new Set<() => void>();
   #tw: Typewriter;
   #currentLineId: LineId | null = null;
-  #twWaiters = new Map<LineId, Set<() => void>>();
-  /** 已打完且仍是 currentLineId 的行:晚到的演出链步(语音慢于打字时)必须立即放行 */
-  #twTypedDone = new Set<LineId>();
   #currentLine: { who: string; emotion: string } | null = null;
   #skipAutoPick: boolean;
   #choiceOverlay: ChoiceOverlay | null = null;
   #onBgm: ((assetId: string | null, fadeMs?: number) => void) | null;
   #onSe: ((assetId: string) => void) | null;
+
+  // ---- 显示泵状态 ----
+  #queue: DisplayEntry[] = [];
+  #pumping = false;
+  #pumpEpoch = -1; // 在跑的泵属于哪个代际(cancel 后旧泵让位,新泵接管 #pumping)
+  #epoch = 0; // 取消代际:replay/newGame 令旧泵退出
+  #gate: Promise<void> | null = null; // normal 模式的点击门(每行一个)
+  #openGate: (() => void) | null = null;
+  /** 打字中点击过的行(连点手感:第二击 = 补完即放行) */
+  #armedFor: LineId | null = null;
+  #armedClicks = 0;
+  #cancelWaiters = new Set<() => void>(); // epoch 取散播点(#cancellable 壳)
+  #idleWaiters = new Set<{ res: () => void }>();
+  #choiceWaiters = new Set<() => void>(); // 选项停等(resolveChoice 成功后放行)
+  #displayedThrough: LineId | null = null;
 
   constructor(deps: EngineCoreDeps) {
     this.bus = deps.bus;
@@ -122,11 +154,13 @@ export class EngineCore {
         onPick: (id) => this.resolveChoice(id),
       });
     }
-    // 选项停等中切到 skip → 立即按默认项收束(offer 时刻已是 skip 的路径在 commitModel)
+    // 选项停等中切到 skip → 立即按默认项收束(到达时刻已 skip 的路径在泵里)
     this.clock.onModeChange((mode) => {
       if (mode === "skip" && this.#skipAutoPick && this.#pendingChoice) {
         this.resolveChoice(this.#pendingChoice.defaultOptionId);
+        return;
       }
+      if (mode !== "normal") this.#releaseGate(); // 门等待中被切 fast/skip/auto:立即放行当前行
     });
   }
 
@@ -161,6 +195,11 @@ export class EngineCore {
 
   get typewriter(): Typewriter {
     return this.#tw;
+  }
+
+  /** 最后已看行(显示泵游标;存档 displayedThrough / 读档名牌同步用) */
+  get displayedThrough(): LineId | null {
+    return this.#displayedThrough;
   }
 
   // ---- React 外部 store 契约 ----
@@ -226,9 +265,10 @@ export class EngineCore {
   }
 
   /**
-   * 提交事务点(§1.4):成员校验/净化 → 补拍号 → ledger → bus line:commit →
-   * 舞台应用 → choice 时挂起等玩家。返回引擎视角的已提交事件与行号。
-   * 不抛错——编剧输出是随机的,违规一律净化+告警,剧情不断。
+   * 提交事务点(§1.4):成员校验/净化 → 补拍号 → ledger → bus line:commit。
+   * 演出全部入显示队列(泵逐条消费,见 #drain)——流式生成再快也不扰动画面,
+   * 对话节奏只由玩家点击(或 auto/skip 模式)驱动。不抛错——编剧输出是随机的,
+   * 违规一律净化+告警,剧情不断。
    */
   commitModel(m: ModelScriptEvent): { ev: ScriptEvent; lineId: LineId } {
     const turnNo = this.#turnNo;
@@ -239,33 +279,20 @@ export class EngineCore {
     switch (ev.t) {
       case "say": {
         ev = { ...ev, emotion: this.#sanitizeEmotion(ev.who, ev.emotion) };
-        this.#currentLine = { who: ev.who, emotion: ev.emotion };
-        this.stage.speak(ev.who);
-        this.#present(lineId, ev.text);
+        this.#queue.push({ kind: "line", lineId, ev });
         break;
       }
       case "narrate": {
-        this.#currentLine = null;
-        this.stage.speak(null);
-        this.#present(lineId, ev.text);
+        this.#queue.push({ kind: "line", lineId, ev });
         break;
       }
       case "stage": {
-        this.#applyStageOp(ev.op);
+        this.#queue.push({ kind: "stage", lineId, op: ev.op });
         break;
       }
       case "choice": {
         ev = this.#sanitizeChoice(ev);
-        const offer: PublicChoiceOffer = {
-          prompt: ev.prompt,
-          options: ev.options.map((o) =>
-            o.delta !== undefined ? { id: o.id, label: o.label, delta: o.delta } : { id: o.id, label: o.label },
-          ),
-          defaultOptionId: ev.defaultOptionId,
-        };
-        this.#pendingChoice = offer;
-        this.setPhase("choicing");
-        this.bus.emit("choice:offered", { choice: offer });
+        this.#queue.push({ kind: "choice", lineId, offer: this.#publicOfferOf(ev) });
         break;
       }
     }
@@ -274,12 +301,7 @@ export class EngineCore {
     this.#seq = seq + 1;
     this.bus.emit("line:commit", { event: ev, lineId });
     this.#notify();
-
-    // skip 模式(offer 时刻已是 skip 的路径):选项按默认项立即收束。
-    // 必须在本事件入账后执行——resolveChoice 回扫 ledger 取 hidden delta
-    if (ev.t === "choice" && this.clock.mode === "skip" && this.#skipAutoPick) {
-      this.resolveChoice(ev.defaultOptionId);
-    }
+    this.#kickPump();
     return { ev, lineId };
   }
 
@@ -290,7 +312,7 @@ export class EngineCore {
 
   /**
    * 玩家选择(M3 起由 BeatRunner/UI 调):校验属组 → 自身+hidden delta 合并过 schema
-   * → world 入账 → ledger 追加 choice 条目 → bus choice:resolved → 回 play。
+   * → world 入账 → ledger 追加 choice 条目 → bus choice:resolved → 回 play → 放行泵的选项停等。
    * 返回 null = 无待选或 id 不属本组(不产生任何副作用)。
    */
   resolveChoice(optionId: string): { optionId: string; label: string } | null {
@@ -331,20 +353,26 @@ export class EngineCore {
     this.#pendingChoice = null;
     this.setPhase("play");
     this.bus.emit("choice:resolved", { optionId: opt.id, label: opt.label });
+    for (const w of [...this.#choiceWaiters]) w(); // 放行泵的选项停等
+    this.#choiceWaiters.clear();
     this.#notify();
     return { optionId: opt.id, label: opt.label };
   }
 
-  // ---- 重放(读档/回溯;不发 line:commit,语音/backlog 订阅者不受扰动) ----
+  // ---- 重放(读档/回溯;不发 line:commit/line:show,backlog/语音订阅者不受扰动) ----
 
-  replay(entries: readonly LedgerEntry[]): void {
-    this.cancelTypewriter();
+  /**
+   * 状态按 entries 全量恢复;舞台视觉只按 visuals(=已看前缀)重放。
+   * restoreFromSave 用两段式:未读尾部经队列重建(#enqueueFromLedger)让玩家重读。
+   */
+  replay(entries: readonly LedgerEntry[], visuals: readonly LedgerEntry[] = entries): void {
+    this.#cancelDisplay();
     this.#currentLine = null;
     this.stage.reset();
     this.#readState = [];
     this.#ledger = [...entries];
     this.#world = foldWorld(entries);
-    this.#pendingChoice = null; // 选项即时性:重放不恢复"等玩家"状态
+    this.#pendingChoice = null; // 选项即时性:重放不恢复"等玩家"状态(未读尾部的 choice 由队列重新 offer)
     if (entries.length === 0) {
       // 空档 = 新游戏语义:第 1 拍尚未开始(beginTurn 将分配 1)
       this.#turnNo = 1;
@@ -356,7 +384,7 @@ export class EngineCore {
     }
     this.setPhase("play"); // 读档落地不回"choicing"(选项即时性:重放不恢复等玩家状态)
     // 视觉终态:按序应用 bg/sprite/speak;shake/flash 是瞬态特效,重放跳过
-    for (const e of entries) {
+    for (const e of visuals) {
       if (e.kind !== "ev") continue;
       const ev = e.ev;
       if (ev.t === "say") {
@@ -370,72 +398,199 @@ export class EngineCore {
     this.#notify();
   }
 
-  /** 推进(点击/Enter):打字中=瞬间补完;等待中=快进语音/停留 */
+  /** 推进(点击/Enter,两段式,mock 同款手感):打字中 = 瞬间补完;等待中 = 放行下一行 */
   advance(): void {
     if (this.#tw.typing) {
-      this.#tw.skip(); // 第一击:补完当前行文本,语音照常播
+      this.#tw.skip(); // 第一击:补完当前行文本,停留本行
+      if (this.#armedFor === this.#currentLineId) {
+        this.#armedClicks += 1; // 打字中的第二击 = 放行意图:补完即自动前进
+      } else {
+        this.#armedFor = this.#currentLineId;
+        this.#armedClicks = 1;
+      }
       return;
     }
-    // 第二击:跳过语音等待/停留,present 链立即收束
-    this.#presVersion++;
-    for (const w of this.#presWaiters) w.res(true);
-    this.#presWaiters.clear();
+    this.#releaseGate(); // 第二击:放行点击门 / 截断 dwell(无门在等 = 无操作,不缓存点击)
   }
 
-  // ---- 演出快进(点击/Enter 的第二段语义;mock/ui.html 同款手感) ----
-  // 第一击(打字中)= 补完文本,不动演出;第二击(等待中)= 跳过语音/停留。
-  #presVersion = 0;
-  #presWaiters = new Set<{ v0: number; res: (v: boolean) => void }>();
+  // ---- 显示泵(commit/显示分离的核心) ----
 
-  /** 演出快进版本号(present 链拿 v0 快照,判"等待期间玩家点击过没有") */
-  get presentationVersion(): number {
-    return this.#presVersion;
+  #kickPump(): void {
+    if (this.#pumping && this.#pumpEpoch === this.#epoch) return;
+    this.#pumping = true;
+    this.#pumpEpoch = this.#epoch;
+    void this.#drain(this.#epoch);
+  }
+
+  async #drain(epoch: number): Promise<void> {
+    try {
+      while (this.#queue.length > 0 && this.#epoch === epoch && this.#phase !== "title") {
+        const entry = this.#queue.shift()!;
+        const ok = await this.#showEntry(entry, epoch);
+        if (!ok || this.#epoch !== epoch) break;
+        this.#displayedThrough = entry.lineId;
+        this.#notify();
+      }
+    } finally {
+      if (this.#epoch === epoch) {
+        // 代际已换(replay/newGame):#pumping 归新泵管,这里什么都不动
+        this.#pumping = false;
+        if (this.#queue.length === 0) {
+          this.bus.emit("display:drained", { displayedThrough: this.#displayedThrough });
+          this.#resolveIdle();
+        }
+      }
+    }
+  }
+
+  async #showEntry(entry: DisplayEntry, epoch: number): Promise<boolean> {
+    switch (entry.kind) {
+      case "stage":
+        // 到达即应用:bg/立绘/音频指令在玩家读到这一刻才生效
+        this.#applyStageOp(entry.op);
+        return true;
+      case "choice":
+        return this.#showChoice(entry, epoch);
+      case "line":
+        return this.#showLine(entry, epoch);
+    }
+  }
+
+  /** 一行 = 打字 + 定步。normal:硬点击门(打完停住等点击——"一句一句对话"的核心);fast/auto:停留;skip:直通 */
+  async #showLine(entry: Extract<DisplayEntry, { kind: "line" }>, epoch: number): Promise<boolean> {
+    const ev = entry.ev;
+    // ① 显示语义:名牌状态/发言高亮/line:show(名牌与语音的入口)
+    this.#armedFor = null;
+    this.#armedClicks = 0;
+    this.#closeGate();
+    this.#currentLine = ev.t === "say" ? { who: ev.who, emotion: ev.emotion } : null;
+    this.#currentLineId = entry.lineId;
+    this.stage.speak(ev.t === "say" ? ev.who : null);
+    this.bus.emit("line:show", { lineId: entry.lineId, ev });
+    this.#notify();
+    // ② 打字(fast/skip 入队即瞬完;打字中点击 → skip + 连点计数)
+    const typing = this.#tw.start(ev.text);
+    if (this.clock.mode === "skip" || this.clock.mode === "fast") this.#tw.skip();
+    if ((await this.#cancellable(epoch, typing)) === null) return false;
+    this.bus.emit("typewriter:done", { lineId: entry.lineId });
+    this.#notify();
+    // ③ 定步:读**当下**模式(不是入队时)
+    const mode = this.clock.mode;
+    if (mode === "skip") return true;
+    if (this.#armedFor === entry.lineId && this.#armedClicks >= 2) {
+      this.#armedFor = null; // 打字中双击:补完即放行
+      return true;
+    }
+    if (mode === "normal") {
+      // 硬点击门:玩家不点,画面永不动(单击补完的行也停在这里等第二击)
+      return (await this.#cancellable(epoch, this.#waitGate())) !== null;
+    }
+    // fast/auto:停留,可被点击(或模式切换)截断
+    const dwell = delay(mode === "auto" ? AUTO_DWELL_MS : FAST_DWELL_MS);
+    const r = await this.#cancellable(epoch, Promise.race([dwell, this.#waitGate()]));
+    this.#closeGate(); // 截断/到点都收门,防误放下一条
+    return r !== null;
+  }
+
+  async #showChoice(entry: Extract<DisplayEntry, { kind: "choice" }>, epoch: number): Promise<boolean> {
+    this.#pendingChoice = entry.offer;
+    this.setPhase("choicing");
+    this.bus.emit("choice:offered", { choice: entry.offer });
+    this.#notify();
+    // 到达时刻已是 skip:按默认项立即收束(resolveChoice 回扫 ledger 取 hidden,事件已入账,天然成立)
+    if (this.#skipAutoPick && this.clock.mode === "skip") {
+      this.resolveChoice(entry.offer.defaultOptionId);
+      return this.#epoch === epoch;
+    }
+    // 停等玩家;resolveChoice 成功后放行(cancel/读档走 #cancellable 退出)
+    const r = await this.#cancellable(epoch, new Promise<void>((res) => this.#choiceWaiters.add(res)));
+    return r !== null;
   }
 
   /**
-   * 等待玩家点击快进:v0 之后 advance 过 → 立即 true;否则挂起直到下一次 advance。
-   * 与语音/停留等待 Promise.race,赢方决定收束。
+   * 泵统一等待壳:epoch 取消(replay/newGame)先到 → null。
+   * 必须用它包一切泵内等待——Typewriter.cancel 后 start promise 永不 resolve,
+   * 裸 await 会让旧泵挂在 #pumping=true 上永久堵死后续 kick(本设计唯一的"必错"点)。
    */
-  waitPresentationSkip(v0: number): Promise<boolean> {
-    if (this.#presVersion > v0) return Promise.resolve(true);
-    return new Promise((res) => {
-      this.#presWaiters.add({ v0, res });
+  #cancellable<T>(epoch: number, p: Promise<T>): Promise<T | null> {
+    if (this.#epoch !== epoch) return Promise.resolve(null);
+    let off: () => void = () => {};
+    const cancelled = new Promise<null>((res) => {
+      const w = () => res(null);
+      this.#cancelWaiters.add(w);
+      off = () => {
+        this.#cancelWaiters.delete(w);
+      };
     });
+    return Promise.race([
+      p.then(
+        (v) => {
+          off();
+          return this.#epoch === epoch ? v : null;
+        },
+        () => {
+          off();
+          return null;
+        },
+      ),
+      cancelled,
+    ]);
   }
 
-  /** 放行全部快进等待者(读档/停生成;不视作点击) */
-  #flushPresentationWaiters(): void {
-    for (const w of this.#presWaiters) w.res(false);
-    this.#presWaiters.clear();
-  }
-
-  /** 演出链等待打字机完(行被顶替/已打完/已取消 → 立即放行,绝不挂死) */
-  waitForTypewriter(lineId: LineId): Promise<void> {
-    if (this.#currentLineId !== lineId || this.#twTypedDone.has(lineId)) return Promise.resolve();
-    return new Promise((res) => {
-      let set = this.#twWaiters.get(lineId);
-      if (!set) {
-        set = new Set();
-        this.#twWaiters.set(lineId, set);
-      }
-      set.add(res);
+  #waitGate(): Promise<void> {
+    this.#gate ??= new Promise<void>((res) => {
+      this.#openGate = res;
     });
+    return this.#gate;
   }
 
-  #resolveTw(lineId: LineId): void {
-    const set = this.#twWaiters.get(lineId);
-    if (!set) return;
-    this.#twWaiters.delete(lineId);
-    for (const fn of set) fn();
+  #releaseGate(): void {
+    this.#openGate?.();
+    this.#openGate = null;
   }
 
-  /** 取消当前行打字机并放行全部等待者(打断/重放/停生成) */
-  cancelTypewriter(): void {
+  #closeGate(): void {
+    this.#gate = null;
+    this.#openGate = null;
+  }
+
+  /** 取消当前显示(读档/新游戏):换代际 + 清队 + 放行一切等待;旧泵在下个 await 处退出 */
+  #cancelDisplay(): void {
+    this.#epoch += 1;
+    this.#queue = [];
+    this.#armedFor = null;
+    this.#armedClicks = 0;
+    this.#closeGate();
     this.#tw.cancel();
-    const cur = this.#currentLineId;
     this.#currentLineId = null;
-    if (cur) this.#resolveTw(cur);
-    this.#flushPresentationWaiters();
+    this.#displayedThrough = null;
+    for (const w of [...this.#cancelWaiters]) w();
+    this.#cancelWaiters.clear();
+    for (const w of [...this.#choiceWaiters]) w();
+    this.#choiceWaiters.clear();
+    this.#resolveIdle();
+  }
+
+  /** 显示队列排空(含选项已决)时 resolve;signal abort 亦 resolve(BeatRunner 的 choice 拍等待用) */
+  whenIdle(signal?: AbortSignal): Promise<void> {
+    if (!this.#pumping && this.#queue.length === 0) return Promise.resolve();
+    return new Promise<void>((res) => {
+      const w = { res };
+      this.#idleWaiters.add(w);
+      signal?.addEventListener(
+        "abort",
+        () => {
+          this.#idleWaiters.delete(w);
+          res();
+        },
+        { once: true },
+      );
+    });
+  }
+
+  #resolveIdle(): void {
+    for (const w of [...this.#idleWaiters]) w.res();
+    this.#idleWaiters.clear();
   }
 
   /** 舞台呈现快照(M5 存档用) */
@@ -467,6 +622,7 @@ export class EngineCore {
   /**
    * 存档快照(plan §1.6):ledger 按摘要游标裁剪、cursor 独立存、
    * currentBeat 在场 = writing 中点保存(pendingContinuation)。
+   * displayedThrough = 泵游标(读档按它切"已看/未读",未读尾部重读)。
    * summary/outlineBeatIndex/currentBeat 由 BeatRunner 持有,经 parts 注入。
    */
   toSaveData(
@@ -489,41 +645,67 @@ export class EngineCore {
       pendingContinuation: parts.currentBeat != null,
       currentBeat: parts.currentBeat ?? null,
       readState: [...this.#readState],
+      displayedThrough: this.#displayedThrough ?? undefined,
     };
   }
 
   /**
-   * 从存档恢复引擎侧状态:ledger/world/cursor/舞台终态/游玩时间。
+   * 从存档恢复引擎侧状态:ledger/world/cursor/舞台/游玩时间 + 未读尾部队列重建。
+   * displayedThrough 命中 → 已看前缀同步 replay(视觉),未读尾部入显示队列让玩家重读
+   * (未决 choice 重新 offer);命中不了(旧档/被摘要裁剪)→ 全部视为已看,旧行为。
    * 摘要与拍进行中信息(summary/currentBeat)归 BeatRunner.restore,由 SaveSystem 协调。
    * 拍状态以 save.cursor 为准——摘要裁剪可能清空 ledger,replay 的空档分支(新游戏语义)
    * 会把拍号回退到 1;仅「cursor={1,0} 且零提交」视作真新档。
    */
   restoreFromSave(save: SaveData): void {
+    const idx = save.displayedThrough ? save.ledger.findIndex((e) => e.lineId === save.displayedThrough) : -1;
+    const shown = idx >= 0 ? save.ledger.slice(0, idx + 1) : save.ledger;
+    const unseen = idx >= 0 ? save.ledger.slice(idx + 1) : [];
     this.#readState = [];
-    this.replay(save.ledger);
+    this.replay(save.ledger, shown);
     const fresh = save.ledger.length === 0 && save.cursor.turnNo === 1 && save.cursor.seq === 0;
     if (!fresh) this.resumeTurn(save.cursor.turnNo, save.cursor.seq);
-    this.stage.restore(save.presentation); // bg/bgm 权威值(replay 不覆盖 bgm)
+    if (unseen.length === 0) {
+      this.stage.restore(save.presentation); // bg 权威值(replay 不覆盖;全看过才叠终态)
+    }
+    // unseen 非空:replay(shown) 的视觉重放已重建"存档时所见"的 bg/立绘,不叠加终态
+    // (终态由未读尾部的 stage 条目在显示时逐步重建)。拍中切 bg 罕见(通常拍首),接受。
     this.#playTimeSec = save.meta.playTimeSec;
     this.#playClockAt = Date.now();
+    this.#displayedThrough = shown.length > 0 ? shown[shown.length - 1]!.lineId : null;
     this.setPhase("play");
+    for (const e of unseen) this.#enqueueFromLedger(e);
+    this.#kickPump();
   }
 
   // ---- 内部 ----
 
-  #present(lineId: LineId, text: string): void {
-    // 新行顶替旧行:旧行的等待者立即放行(演出链快速跟进)
-    if (this.#currentLineId && this.#currentLineId !== lineId) this.#resolveTw(this.#currentLineId);
-    // 旧「已打完」标记作废:被顶替的行此后走 ≠currentLineId 立即放行路径
-    this.#twTypedDone.clear();
-    this.#currentLineId = lineId;
-    void this.#tw.start(text).then(() => {
-      this.#twTypedDone.add(lineId);
-      this.#resolveTw(lineId);
-      if (this.#currentLineId === lineId) {
-        this.bus.emit("typewriter:done", { lineId });
-      }
-    });
+  /** 未读尾部按 ledger 形态还原为显示条目(kind:"choice" 是已决的历史记录,不可显示) */
+  #enqueueFromLedger(e: LedgerEntry): void {
+    if (e.kind === "choice") return;
+    switch (e.ev.t) {
+      case "say":
+      case "narrate":
+        this.#queue.push({ kind: "line", lineId: e.lineId, ev: e.ev });
+        break;
+      case "stage":
+        this.#queue.push({ kind: "stage", lineId: e.lineId, op: e.ev.op });
+        break;
+      case "choice":
+        // 未决选项(存档时停等中)→ 泵到达时重新 offer
+        this.#queue.push({ kind: "choice", lineId: e.lineId, offer: this.#publicOfferOf(e.ev) });
+        break;
+    }
+  }
+
+  #publicOfferOf(ev: Extract<ScriptEvent, { t: "choice" }>): PublicChoiceOffer {
+    return {
+      prompt: ev.prompt,
+      options: ev.options.map((o) =>
+        o.delta !== undefined ? { id: o.id, label: o.label, delta: o.delta } : { id: o.id, label: o.label },
+      ),
+      defaultOptionId: ev.defaultOptionId,
+    };
   }
 
   #sanitizeEmotion(who: SpeakerId, emotion: EmotionTag): EmotionTag {

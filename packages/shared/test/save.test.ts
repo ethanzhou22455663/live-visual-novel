@@ -100,4 +100,14 @@ describe("SaveDataSchema / migrateSave", () => {
     const bad = makeSave([{ kind: "choice", lineId: "1.0", turnNo: 1, seq: 0, optionId: "a" } as unknown as LedgerEntry]);
     expect(SaveDataSchema.safeParse(bad).success).toBe(false);
   });
+
+  it("displayedThrough(显示泵游标,2026-10-17):可选字段往返;旧档缺省零迁移直通", () => {
+    const withCursor = { ...makeSave([evEntry(1, 0, "あ"), evEntry(1, 1, "い")]), displayedThrough: makeLineId(1, 0) };
+    expect(SaveDataSchema.parse(withCursor).displayedThrough).toBe("1.0");
+    expect(migrateSave(JSON.stringify(withCursor)).displayedThrough).toBe("1.0");
+    const legacy = makeSave([evEntry(1, 0, "あ")]);
+    const parsed = SaveDataSchema.parse(legacy) as Record<string, unknown>;
+    expect("displayedThrough" in parsed).toBe(false); // 缺省 = 读档视为全部已看
+    expect(migrateSave(JSON.stringify(legacy))).toEqual(legacy);
+  });
 });

@@ -2,8 +2,9 @@
  * SaveSystem(plan §1.6/M5):槽位管理 + auto 存档 + 读档续写的协调者。
  * - 槽位:自动 1 槽 + 手动 3 槽(用户裁决,无 quick);存储经 StoragePort(app 注入
  *   LocalStorageAdapter,测试注入 MemoryStorage)
- * - 写入时机:仅行边界。writing 中点手动存档 → 挂起到下一个 line:commit 快照,
- *   此时 runner.currentBeat 在场 ⇒ pendingContinuation=true
+ * - 写入时机:显示边界。writing 中点手动存档 → 挂起到下一个 display:drained(泵排空,
+ *   commit 现遥遥领先于显示,必须在显示边界兑现)快照,此时 runner.currentBeat 在场
+ *   ⇒ pendingContinuation=true
  * - auto 触发:beat:end(beatEnd/sceneEnd)与 choice:resolved(choice 收束瞬间)
  * - 读档:EngineCore.restoreFromSave(引擎侧)+ BeatRunner.restore(摘要/拍进行中),
  *   pendingContinuation ⇒ 下一轮 run() 跳过导演续写同一拍
@@ -56,7 +57,7 @@ export class SaveSystem {
     this.#getRunner = deps.getRunner ?? (() => null);
 
     this.#offs.push(
-      deps.bus.on("line:commit", () => {
+      deps.bus.on("display:drained", () => {
         if (!this.#deferredSlot) return;
         const d = this.#deferredSlot;
         this.#deferredSlot = null;
@@ -80,7 +81,7 @@ export class SaveSystem {
   }
 
   /**
-   * 存档。行边界(拍间/停止中)即时落盘;writing 中点挂起到下一个 line:commit。
+   * 存档。显示边界(泵排空/拍间/停止中)即时落盘;writing 中点挂起到下一个 display:drained。
    */
   save(slot: SaveSlot, label?: string): SaveResult {
     if (!isSaveSlot(slot)) return { ok: false, reason: "bad-data" };

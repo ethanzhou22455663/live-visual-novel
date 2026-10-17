@@ -72,6 +72,8 @@ export const SaveDataSchema = z.object({
     })
     .nullable(),
   readState: z.array(z.string()),
+  /** 最后已看行(显示泵游标;缺省 = 旧档,读档视为全部已看。2026-10-17 显示泵重写) */
+  displayedThrough: z.string().optional(),
 });
 
 export interface SaveMeta {
@@ -98,6 +100,7 @@ export interface SaveData {
   pendingContinuation: boolean;
   currentBeat: SaveCurrentBeat | null;
   readState: string[];
+  displayedThrough?: string;
 }
 
 // ---------- 裁剪与迁移 ----------

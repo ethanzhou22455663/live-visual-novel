@@ -65,8 +65,12 @@ export interface GameEventMap {
   };
   /** Tier-2 窥视文本(未提交行的半截):只进 ghost 区,绝不进状态/TTS */
   "generation:preview": { text: string };
-  /** 事务点:存档/TTS 入队/backlog 全挂这(replay 重放时不发,见 EngineCore.replay) */
+  /** 事务点:ledger 持久化通知(backlog/诊断挂这;演出一律看 line:show,不看它。replay 不发) */
   "line:commit": { event: ScriptEvent; lineId: LineId };
+  /** 泵显示行(打字开始)时发:名牌/▼/语音入口都挂这(replay 不发;2026-10-17 显示泵重写) */
+  "line:show": { lineId: LineId; ev: Extract<ScriptEvent, { t: "say" | "narrate" }> };
+  /** 显示队列排空(泵空闲):SaveSystem 在此兑现挂起存档;displayedThrough = 最后已看行 */
+  "display:drained": { displayedThrough: LineId | null };
   "line:skip": { lineId: LineId };
   "typewriter:progress": { lineId: LineId; ratio: number };
   "typewriter:done": { lineId: LineId };
