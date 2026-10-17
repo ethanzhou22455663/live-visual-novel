@@ -27,6 +27,8 @@ export interface VoicePipelineDeps {
   content: ContentPort;
   /** 显示时刻读模式:skip/fast 静音 */
   clock: PresentationClock;
+  /** 排查 log(静音卫兵/请求/状态;bootstrap 注 console.log("[voice]", …);测试可省) */
+  log?(msg: string): void;
 }
 
 export class VoicePipeline {
@@ -35,6 +37,7 @@ export class VoicePipeline {
   #channel: VoiceChannel | null;
   #content: ContentPort;
   #clock: PresentationClock;
+  #log: (msg: string) => void;
   /** 行代际:新行顶旧行(合成 signal + 句间检查都用它) */
   #lineAbort: AbortController | null = null;
   #token = 0;
@@ -45,6 +48,7 @@ export class VoicePipeline {
     this.#channel = deps.voiceChannel;
     this.#content = deps.content;
     this.#clock = deps.clock;
+    this.#log = deps.log ?? (() => {});
     // 唯一入口:泵显示台词行时触发(replay 不发 line:show,读档静音,天然正确)
     deps.bus.on("line:show", ({ lineId, ev }) => {
       if (ev.t === "say") this.#speak(ev.who, ev.text, lineId);
@@ -52,11 +56,12 @@ export class VoicePipeline {
   }
 
   #speak(who: string, text: string, lineId: string): void {
-    if (!this.#synth) return;
-    if (!this.#content.characterIds.has(who)) return; // 未知角色静音
+    if (!this.#synth) return this.#log(`[${lineId}] 无 TTS → 静音`);
+    if (!this.#content.characterIds.has(who)) return this.#log(`[${lineId}] 未知角色「${who}」→ 静音`);
     const mode = this.#clock.mode;
-    if (mode === "skip" || mode === "fast") return;
+    if (mode === "skip" || mode === "fast") return this.#log(`[${lineId}] 模式 ${mode} → 静音`);
     // 新行顶掉在播行:停旧合成、停旧播放;旧句终态由其 playOut 在 play 收束后补发 done
+    if (this.#token > 0) this.#log(`[${lineId}] 新行顶旧行 #${this.#token}`);
     this.#lineAbort?.abort();
     this.#channel?.stopCurrent();
     const signal = (this.#lineAbort = new AbortController()).signal;
@@ -73,27 +78,31 @@ export class VoicePipeline {
       clipLineId: `${lineId}#${i}`,
       promise,
     }));
+    this.#log(`[${lineId}] speak ${who} config=${req.configId} ${entries.length}句 「${text.slice(0, 20)}」`);
     void this.#playOut(entries, token);
   }
 
   /** 按句序播;单句失败静音继续;被新行顶掉(token 变)即止。终态必发,ducking 不卡 */
   async #playOut(entries: VoiceEntry[], token: number): Promise<void> {
     for (const entry of entries) {
-      if (token !== this.#token) return; // 句间:已被新行顶掉,剩余句放弃
+      if (token !== this.#token) return this.#log(`[${entry.clipLineId}] 放弃(被新行顶掉)`);
       let clip: ReadyClip;
       try {
         clip = await entry.promise;
-      } catch {
+      } catch (e) {
+        this.#log(`[${entry.clipLineId}] 合成失败: ${(e as Error | undefined)?.message ?? "?"}`);
         this.#bus.emit("voice:state", { lineId: entry.clipLineId, state: "failed" });
         continue;
       }
-      if (token !== this.#token) return;
+      if (token !== this.#token) return this.#log(`[${entry.clipLineId}] 放弃(合成后已被顶掉)`);
       this.#bus.emit("voice:state", { lineId: entry.clipLineId, state: "ready" });
       try {
         if (!this.#channel) throw new Error("语音通道未解锁");
         this.#bus.emit("voice:state", { lineId: entry.clipLineId, state: "playing" });
+        this.#log(`[${entry.clipLineId}] 播放`);
         await this.#channel.play(clip);
-      } catch {
+      } catch (e) {
+        this.#log(`[${entry.clipLineId}] 播放失败: ${(e as Error | undefined)?.message ?? "?"}`);
         this.#bus.emit("voice:state", { lineId: entry.clipLineId, state: "failed" });
         continue;
       }

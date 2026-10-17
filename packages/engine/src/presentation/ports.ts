@@ -15,6 +15,8 @@ export interface StageDeps {
   content: ContentPort;
   /** 非致命告警(未知表情回退、缺图占位等)→ bus engine:warning */
   warn(msg: string): void;
+  /** 排查 log(布局/表情埋点;bootstrap 注 console.log("[stage]", …);测试可省) */
+  log?(msg: string): void;
 }
 
 export interface SpriteOp {

@@ -1,10 +1,10 @@
 /**
  * DOM/CSS 舞台实现(P1 裁决 §6;视觉语言移植自 mock/ui.html):
  * - 背景两层 A/B 交叉淡化 .9s(同层换 src 会闪白,故双层)
- * - 立绘 enter:opacity+translateY(36px→0) .65s;槽位 left/center/right = 26%/50%/74% left 锚定
- *   (2026-10-17 手验:素材是 1920×1080 全画布 PNG、人物画在画布中心宽约 40%,
- *    旧 34/66 槽距 32% 盖不住人物宽 → 两人同屏重叠;26/74 槽距 48% 才放得下)
+ * - 立绘 enter:opacity+translateY(36px→0) .65s;**位置由在场人数唯一决定**(2026-10-17 裁决:
+ *   "一人/两人/三人分别设置固定位置"——编剧 slot/move 不再决定位置,人数变化是唯一平移来源)
  * - 说话人高亮(dim 非发言者)按 2026-10-17 裁决移除:「男主说话立绘变黑是多此一举」
+ * - 台词表情驱动:say.emotion → diff(权威来源,见 EngineCore#showLine)
  * - 未知表情 → defaultExpr + warn(坑⑧);图片未载完 → 占位淡入(坑⑭)
  * - 1920×1080 逻辑坐标,外层负责 scale;机制性样式全部内联(engine 自足,类名仅作语义钩子)
  */
@@ -17,35 +17,39 @@ export function createDomStagePort(deps: StageDeps): StagePort {
   return new DomStagePort(deps);
 }
 
-const STAGE_W = 1920;
-const STAGE_H = 1080;
-const SLOT_X: Record<"left" | "center" | "right", number> = { left: 26, center: 50, right: 74 };
+// 按在场人数固定排位(2026-10-17 裁决)。素材是 1920×1080 全画布 PNG,人物画在画布中心、
+// 宽约 40% 舞台宽:两人槽距 48% 放得下;三人 1 倍缩放数学上放不下(40×3>100)→ 全体缩 .72
+// (人物宽≈29%,槽距 32% 放得下)。出场序从左到右;有人进/出全体平滑重排,恒不重叠。
+const LAYOUT: Record<number, { xs: number[]; scale: number }> = {
+  1: { xs: [50], scale: 1 },
+  2: { xs: [26, 74], scale: 1 },
+  3: { xs: [18, 50, 82], scale: 0.72 },
+};
 
-// 立绘定位(2026-10-17 修复):left:% 锚定槽位(% 相对包含块 = 1920 逻辑宽,语义正确),
-// transform 只做 translate(-50%) 水平居中 + 入场的 36px 落下。
-// 旧实现把槽位写进 translateX(±16%)——CSS 百分比按元素自身宽度解析,收缩包图的元素
-// 上等于把中心钉在舞台 x=0(左半被 overflow:hidden 裁掉),三槽位全部塌在左缘。
+// 立绘定位:left:% 锚定(% 相对包含块 = 1920 逻辑宽)+ translate(-50%) 水平居中;
+// transform 同时承担入场 36px 落下与人数缩放(place 完整重写,不能只改 left)。
 
 class SpriteHandle {
   readonly el: HTMLElement;
   readonly img: HTMLImageElement;
-  slot: "left" | "center" | "right";
   emotion = "";
 
   readonly who: string;
+  #x = 50; // 当前布局位置(place 写入;快照槽名按它反查)
 
-  constructor(who: string, layer: HTMLElement, initialSlot: "left" | "center" | "right" | undefined) {
+  constructor(who: string, layer: HTMLElement) {
     this.who = who;
-    this.slot = initialSlot ?? "center";
     this.el = document.createElement("div");
     this.el.className = "gal-spr";
     this.el.dataset.who = who;
     this.el.style.cssText = [
       "position:absolute",
       "bottom:0",
-      `left:${SLOT_X[this.slot]}%`,
+      "left:50%",
       "height:100%",
       "aspect-ratio:auto",
+      "opacity:0",
+      "transform:translate(-50%, 36px)",
       "transition:opacity .65s cubic-bezier(.2,.7,.2,1), transform .65s cubic-bezier(.2,.7,.2,1), left .65s cubic-bezier(.2,.7,.2,1)",
     ].join(";");
     this.img = document.createElement("img");
@@ -53,23 +57,25 @@ class SpriteHandle {
     this.img.style.cssText = "height:100%;width:auto;max-width:none;display:block;";
     this.el.append(this.img);
     layer.append(this.el);
-    // enter 动画:下一帧落位(仅 opacity + 36px 落下;水平居中交给 translate(-50%))
-    this.el.style.opacity = "0";
-    this.el.style.transform = "translate(-50%, 36px)";
+  }
+
+  /** 快照用布局槽名(按当前 x 反查;位置由引擎按人数管理,此名仅存展示) */
+  get slot(): "left" | "center" | "right" {
+    return this.#x <= 35 ? "left" : this.#x <= 65 ? "center" : "right";
+  }
+
+  /** 引擎按人数排位:写 left% + transform 终值(缩放随人数);首调后下一帧淡入落位 */
+  place(x: number, scale: number): void {
+    this.#x = x;
+    this.el.style.left = `${x}%`;
+    this.el.style.transform = `translate(-50%, 0) scale(${scale})`;
     requestAnimationFrame(() => {
       this.el.style.opacity = "1";
-      this.el.style.transform = "translate(-50%, 0)";
     });
   }
 
   apply(emotion: string): void {
     this.emotion = emotion;
-  }
-
-  moveTo(slot: "left" | "center" | "right"): void {
-    if (this.slot === slot) return;
-    this.slot = slot;
-    this.el.style.left = `${SLOT_X[slot]}%`; // left 过渡平滑移位
   }
 
   exit(): void {
@@ -163,7 +169,7 @@ export class DomStagePort implements StagePort {
     });
   }
 
-  // ---- 立绘 ----
+  // ---- 立绘(位置由在场人数唯一决定;编剧 slot/move 被忽略) ----
   sprite(op: SpriteOp): void {
     if (!this.#deps.content.characterIds.has(op.who)) {
       this.#deps.warn(`未知角色「${op.who}」,立绘指令忽略`);
@@ -173,20 +179,22 @@ export class DomStagePort implements StagePort {
     if (op.action === "exit") {
       h?.exit();
       this.#sprites.delete(op.who);
+      this.#relayout(); // 剩下的人平滑重排(人数变化是唯一平移来源)
       return;
     }
     if (!h) {
       if (op.action === "diff") return; // 未出场谈 diff = 编剧越权,忽略
-      h = new SpriteHandle(op.who, this.#sprLayer, op.slot);
+      h = new SpriteHandle(op.who, this.#sprLayer);
       this.#sprites.set(op.who, h);
+      this.#relayout(); // 出场即按在场人数排位
     }
-    if (op.slot) h.moveTo(op.slot);
     const wanted = op.emotion ?? h.emotion;
     const valid = this.#deps.content.emotionsOf(op.who);
     const emotion = wanted && valid.has(wanted) ? wanted : this.#deps.content.defaultExprOf(op.who);
     if (wanted && wanted !== emotion) {
       this.#deps.warn(`未知表情「${wanted}」@${op.who} → 回退「${emotion}」`);
     }
+    if (emotion !== h.emotion) this.#deps.log?.(`表情 ${op.who}: ${h.emotion || "(无)"}→${emotion} @${op.action}`);
     h.apply(emotion);
     if (emotion) {
       const url = this.#deps.resolve("sprite", op.who, emotion);
@@ -242,9 +250,25 @@ export class DomStagePort implements StagePort {
   restore(p: PresentationSnapshot): void {
     this.reset();
     if (p.bg) this.bg(p.bg, "cut");
+    // slot 不回喂:位置由在场人数重排决定(旧档布局同样按人数走,行为更正确)
     for (const [who, s] of Object.entries(p.sprites)) {
-      this.sprite({ who, slot: s.slot, action: "enter", emotion: s.emotion });
+      this.sprite({ who, action: "enter", emotion: s.emotion });
     }
+  }
+
+  /** 按在场人数排位(出场序从左到右);有人进/出即调,全体平滑重排,恒不重叠 */
+  #relayout(): void {
+    const n = this.#sprites.size;
+    const lay = LAYOUT[n];
+    let i = 0;
+    const placed: string[] = [];
+    for (const h of this.#sprites.values()) {
+      const x = lay ? lay.xs[i]! : ((i + 1) / (n + 1)) * 100; // >3 人兜底均分(罕见,仅防炸)
+      h.place(x, lay ? lay.scale : 0.6);
+      placed.push(`${h.who}@${x}%`);
+      i++;
+    }
+    this.#deps.log?.(`立绘重排 ${n}人: ${placed.join(" ")}`);
   }
 
   #load(url: string): Promise<HTMLImageElement | null> {

@@ -4,7 +4,7 @@ import { createDomStagePort } from "../src/presentation/DomStagePort.ts";
 import type { StageDeps } from "../src/presentation/ports.ts";
 
 const content: ContentPort = {
-  characterIds: new Set(["enagi", "yukitaka"]),
+  characterIds: new Set(["enagi", "yukitaka", "mitsuki"]),
   sceneIds: new Set(["classroom", "street"]),
   bgmIds: new Set<string>(),
   defaultExprOf: (who) => (who === "enagi" ? "平常" : ""),
@@ -103,15 +103,15 @@ describe("DomStagePort", () => {
     port.bg(null);
   });
 
-  it("snapshot/restore 往返:背景与立绘槽位表情还原", async () => {
+  it("snapshot/restore 往返:背景与立绘表情还原(slot 名仅存展示,布局按人数重排)", async () => {
     const { port } = makePort();
     port.bg("classroom", "cut");
     await flushImages();
-    port.sprite({ who: "enagi", action: "enter", slot: "left", emotion: "笑" });
+    port.sprite({ who: "enagi", action: "enter", emotion: "笑" }); // 1 人 → 居中
     await flushImages();
     const snap = port.snapshot();
     expect(snap.bg).toBe("classroom");
-    expect(snap.sprites.enagi).toEqual({ slot: "left", emotion: "笑" });
+    expect(snap.sprites.enagi).toEqual({ slot: "center", emotion: "笑" });
 
     port.reset();
     expect(port.snapshot().bg).toBeNull();
@@ -120,21 +120,48 @@ describe("DomStagePort", () => {
     port.restore(snap);
     await new Promise((r) => setTimeout(r, 0)); // bg 走异步 load 缓存
     expect(port.snapshot().bg).toBe("classroom");
+    expect(port.snapshot().sprites.enagi).toEqual({ slot: "center", emotion: "笑" });
+
+    // 两人档:slot 名按当前 x 反查(left/right);restore 不回喂 slot,重排即正确布局
+    port.sprite({ who: "yukitaka", action: "enter" });
     expect(port.snapshot().sprites.enagi).toEqual({ slot: "left", emotion: "笑" });
+    expect(port.snapshot().sprites.yukitaka).toEqual({ slot: "right", emotion: "" });
   });
 
-  it("槽位 left 锚定:26%/50%/74%(2026-10-17 二调:全画布素材人物宽~40%,槽距 48% 才不重叠),水平居中归 translate(-50%)", async () => {
+  it("人数固定布局(2026-10-17 裁决):排位由在场人数唯一决定,编剧 slot 被忽略", () => {
     const { root, port } = makePort();
-    port.sprite({ who: "enagi", action: "enter", slot: "center", emotion: "平常" });
-    const el = root.querySelector<HTMLElement>('[data-who="enagi"]')!;
-    expect(el.style.left).toBe("50%"); // % 相对包含块(1920 逻辑宽),不再按元素自身宽度解析
-    expect(el.style.transform).toContain("translate(-50%");
-    port.sprite({ who: "yukitaka", action: "enter", slot: "left" });
+    // 1 人:居中(slot:"right" 是编剧乱发的,必须被忽略;scale=1)
+    port.sprite({ who: "enagi", action: "enter", slot: "right", emotion: "平常" });
+    const el1 = root.querySelector<HTMLElement>('[data-who="enagi"]')!;
+    expect(el1.style.left).toBe("50%");
+    expect(el1.style.transform).toContain("translate(-50%, 0) scale(1)");
+    // 2 人:26/74(全体重排:出场序从左到右)
+    port.sprite({ who: "yukitaka", action: "enter", slot: "center" });
     const el2 = root.querySelector<HTMLElement>('[data-who="yukitaka"]')!;
-    expect(el2.style.left).toBe("26%");
-    port.sprite({ who: "enagi", action: "diff", slot: "right" });
-    expect(el.style.left).toBe("74%"); // moveTo 走 left 过渡
-    expect(el.style.transition).toContain("left .65s");
+    expect(el1.style.left).toBe("26%");
+    expect(el2.style.left).toBe("74%");
+    expect(el2.style.transform).toContain("scale(1)");
+    // 3 人:18/50/82 + 全体缩 .72(素材全画布,1 倍放不下)
+    port.sprite({ who: "mitsuki", action: "enter" });
+    const el3 = root.querySelector<HTMLElement>('[data-who="mitsuki"]')!;
+    expect(el1.style.left).toBe("18%");
+    expect(el2.style.left).toBe("50%");
+    expect(el3.style.left).toBe("82%");
+    for (const el of [el1, el2, el3]) expect(el.style.transform).toContain("scale(0.72)");
+    expect(el1.style.transition).toContain("left .65s"); // 重排平移走过渡
+  });
+
+  it("exit → 剩余立绘按人数重排(人数变化是唯一平移来源)", () => {
+    const { root, port } = makePort();
+    port.sprite({ who: "enagi", action: "enter" });
+    port.sprite({ who: "yukitaka", action: "enter" });
+    port.sprite({ who: "mitsuki", action: "enter" });
+    const el1 = root.querySelector<HTMLElement>('[data-who="enagi"]')!;
+    const el2 = root.querySelector<HTMLElement>('[data-who="yukitaka"]')!;
+    port.sprite({ who: "mitsuki", action: "exit" });
+    expect(el1.style.left).toBe("26%"); // 3 人表 → 2 人表
+    expect(el2.style.left).toBe("74%");
+    expect(el1.style.transform).toContain("scale(1)"); // 缩放复原
   });
 
   it("exit 移除立绘(≥.65s 淡出后移除 DOM)", async () => {

@@ -85,6 +85,7 @@ function buildStageDeps(root: HTMLElement, content: ContentPort, pack: ContentPa
       warnings.push(m);
       console.warn("[stage]", m);
     },
+    log: (m) => console.log("[stage]", m), // 排查埋点(人数布局/表情),常驻
   };
 }
 
@@ -230,6 +231,12 @@ async function assemble(): Promise<Assembled> {
   bus.on("typewriter:done", () => {
     nextEl.classList.add("on");
   });
+  // 排查埋点(2026-10-17 手验:表情/语音报错但现象不明)——每显示一行打一条,常驻
+  bus.on("line:show", ({ lineId, ev }) => {
+    const emo = ev.t === "say" ? ` emotion=${ev.emotion ?? "(无)"}` : "";
+    const who = ev.t === "say" ? ` who=${ev.who}` : "";
+    console.log(`[line] ${lineId} ${ev.t}${who}${emo} 「${ev.text.slice(0, 20)}」`);
+  });
   bus.on("engine:phase", ({ phase }) => {
     const show = phase === "play" || phase === "choicing";
     winEl.classList.toggle("on", show);
@@ -289,7 +296,14 @@ async function assemble(): Promise<Assembled> {
 
   // 语音 = 纯旁路观察者(2026-10-17 泵重写):只订阅 line:show,结构上不可能门控对话节奏
   if (synth) {
-    void new VoicePipeline({ bus, synth, voiceChannel: audio.voiceChannel, content, clock });
+    void new VoicePipeline({
+      bus,
+      synth,
+      voiceChannel: audio.voiceChannel,
+      content,
+      clock,
+      log: (m) => console.log("[voice]", m), // 排查埋点(静音卫兵/切句/状态),常驻
+    });
   }
 
   // ---- 导演/编剧/摘要(同一条 LLM 连接) ----
