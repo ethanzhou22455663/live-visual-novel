@@ -35,7 +35,6 @@ function fakeStage(): StagePort & { calls: StageCall[]; snaps: unknown[] } {
     snaps,
     bg: (a, t) => calls.push({ op: "bg", args: [a, t] }),
     sprite: (o: SpriteOp) => calls.push({ op: "sprite", args: [o] }),
-    speak: (w) => calls.push({ op: "speak", args: [w] }),
     shake: () => calls.push({ op: "shake", args: [] }),
     flash: () => calls.push({ op: "flash", args: [] }),
     reset: () => calls.push({ op: "reset", args: [] }),
@@ -91,12 +90,11 @@ describe("显示泵:队列与顺序", () => {
     expect(ids).toEqual(["1.0", "1.1", "1.2", "1.3", "1.4"]);
     await vi.waitFor(() => expect(engine.displayedThrough).toBe("1.4"), { timeout: 4000 });
     expect(shows).toEqual(["1.1", "1.2", "1.4"]); // stage 指令不占 line:show
-    expect(stage.calls.map((c) => c.op)).toEqual(["bg", "speak", "speak", "sprite", "speak"]);
+    expect(stage.calls.map((c) => c.op)).toEqual(["bg", "sprite", "sprite", "sprite"]);
     expect(stage.calls[0]!.args[0]).toBe("classroom");
-    expect(stage.calls[1]!.args[0]).toBe("enagi"); // say → speak(who)
-    expect(stage.calls[2]!.args[0]).toBeNull(); // narrate → speak(null)
-    expect(stage.calls[3]!.args[0]).toMatchObject({ who: "enagi", slot: "center" });
-    expect(stage.calls[4]!.args[0]).toBe("enagi");
+    expect(stage.calls[1]!.args[0]).toMatchObject({ who: "enagi", action: "diff", emotion: "平常" }); // say 表情驱动(权威来源)
+    expect(stage.calls[2]!.args[0]).toMatchObject({ who: "enagi", slot: "center", action: "enter" }); // 显式 sprite op
+    expect(stage.calls[3]!.args[0]).toMatchObject({ who: "enagi", action: "diff", emotion: "笑" });
   });
 });
 

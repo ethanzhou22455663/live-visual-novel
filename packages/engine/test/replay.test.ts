@@ -24,7 +24,6 @@ function fakeStage(): StagePort & { calls: StageCall[] } {
     calls,
     bg: (a, t) => calls.push({ op: "bg", args: [a, t] }),
     sprite: (o: SpriteOp) => calls.push({ op: "sprite", args: [o] }),
-    speak: (w) => calls.push({ op: "speak", args: [w] }),
     shake: () => calls.push({ op: "shake", args: [] }),
     flash: () => calls.push({ op: "flash", args: [] }),
     reset: () => calls.push({ op: "reset", args: [] }),
@@ -64,7 +63,7 @@ describe("EngineCore commit 事务点", () => {
     expect(engine.ledger.length).toBe(6);
   });
 
-  it("bus 序列:commit 同步发 line:commit;泵显示时发 line:show 并驱动 speak", async () => {
+  it("bus 序列:commit 同步发 line:commit;泵显示时发 line:show 且 say 表情驱动立绘 diff", async () => {
     const { engine, bus, stage } = makeEngine();
     const commits: string[] = [];
     const shows: string[] = [];
@@ -76,8 +75,11 @@ describe("EngineCore commit 事务点", () => {
     expect(commits).toEqual(["1.0", "1.1", "1.2", "1.3", "1.4"]); // commit 事务点同步
     await vi.waitFor(() => expect(engine.displayedThrough).toBe("1.4")); // 泵排空
     expect(shows).toEqual(["1.1", "1.2", "1.4"]); // stage 指令不占 line:show
-    const speakCalls = stage.calls.filter((c) => c.op === "speak").map((c) => c.args[0]);
-    expect(speakCalls).toEqual(["enagi", null, "enagi"]); // 显示时刻驱动,顺序不变
+    // 台词表情驱动:say(平常) → diff;say(笑) → diff;显式 sprite op 照常;narrate 无舞台调用
+    expect(stage.calls.map((c) => c.op)).toEqual(["bg", "sprite", "sprite", "sprite"]);
+    expect(stage.calls[1]!.args[0]).toMatchObject({ who: "enagi", action: "diff", emotion: "平常" });
+    expect(stage.calls[2]!.args[0]).toMatchObject({ who: "enagi", action: "enter", slot: "center", emotion: "笑" });
+    expect(stage.calls[3]!.args[0]).toMatchObject({ who: "enagi", action: "diff", emotion: "笑" });
   });
 
   it("未知表情净化为 defaultExpr 并发 engine:warning;ledger 存净化后事件", () => {
@@ -159,9 +161,9 @@ describe("EngineCore replay", () => {
     expect(engine.world.affection.enagi).toBe(3);
     expect(engine.pendingChoice).toBeNull();
     expect(engine.phase).toBe("play");
-    // 舞台终态:最后一次 speak 来自 choice 前的 say
-    const speaks = stage.calls.filter((c) => c.op === "speak").map((c) => c.args[0]);
-    expect(speaks.at(-1)).toBe("enagi");
+    // 舞台终态:最后一次表情 diff 来自 choice 前的 say(笑)
+    const sprites = stage.calls.filter((c) => c.op === "sprite").map((c) => c.args[0] as SpriteOp);
+    expect(sprites.at(-1)).toMatchObject({ who: "enagi", action: "diff", emotion: "笑" });
   });
 
   it("resumeTurn 延续拍号:重放后续写行号不重复", () => {

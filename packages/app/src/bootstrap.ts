@@ -151,6 +151,12 @@ async function assemble(): Promise<Assembled> {
   }
   const stage = createDomStagePort(buildStageDeps(sceneEl, content, pack, warnings));
 
+  // 标题视觉(mock titleVisual 同款:学校背景,透过 .title .shade 的半透明渐变可见;
+  // 2026-10-17 手验:此前标题相位舞台无 bg → 纯黑一整片)。场景 id 是内容包数据,不硬编码:
+  // 优先「学校」,退而取第一个;进入游戏后第一拍的 bg 指令自然覆盖。
+  const titleScene = [...content.sceneIds].find((id) => id === "学校") ?? [...content.sceneIds][0];
+  if (titleScene) stage.bg(titleScene);
+
   const fit = (): void => {
     const s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
     stageEl.style.transform = `translate(-50%, -50%) scale(${s})`;

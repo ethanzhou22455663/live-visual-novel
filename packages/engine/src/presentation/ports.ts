@@ -28,8 +28,6 @@ export interface StagePort {
   /** 切背景;null=无图纯色。fade=交叉淡化 .9s */
   bg(assetId: string | null, transition?: "fade" | "cut" | "slide"): void;
   sprite(op: SpriteOp): void;
-  /** 发言者高亮:非发言者暗化 brightness .6;null=无发言(旁白)全部保持 */
-  speak(who: string | null): void;
   shake(): void;
   flash(): void;
   /** 回标题:清空全部舞台状态 */

@@ -1,8 +1,10 @@
 /**
  * DOM/CSS 舞台实现(P1 裁决 §6;视觉语言移植自 mock/ui.html):
  * - 背景两层 A/B 交叉淡化 .9s(同层换 src 会闪白,故双层)
- * - 立绘 enter:opacity+translateY(36px→0) .65s;槽位 left/center/right = 34%/50%/66% left 锚定
- * - 非发言者 brightness(.6) saturate(.85)
+ * - 立绘 enter:opacity+translateY(36px→0) .65s;槽位 left/center/right = 26%/50%/74% left 锚定
+ *   (2026-10-17 手验:素材是 1920×1080 全画布 PNG、人物画在画布中心宽约 40%,
+ *    旧 34/66 槽距 32% 盖不住人物宽 → 两人同屏重叠;26/74 槽距 48% 才放得下)
+ * - 说话人高亮(dim 非发言者)按 2026-10-17 裁决移除:「男主说话立绘变黑是多此一举」
  * - 未知表情 → defaultExpr + warn(坑⑧);图片未载完 → 占位淡入(坑⑭)
  * - 1920×1080 逻辑坐标,外层负责 scale;机制性样式全部内联(engine 自足,类名仅作语义钩子)
  */
@@ -17,7 +19,7 @@ export function createDomStagePort(deps: StageDeps): StagePort {
 
 const STAGE_W = 1920;
 const STAGE_H = 1080;
-const SLOT_X: Record<"left" | "center" | "right", number> = { left: 34, center: 50, right: 66 };
+const SLOT_X: Record<"left" | "center" | "right", number> = { left: 26, center: 50, right: 74 };
 
 // 立绘定位(2026-10-17 修复):left:% 锚定槽位(% 相对包含块 = 1920 逻辑宽,语义正确),
 // transform 只做 translate(-50%) 水平居中 + 入场的 36px 落下。
@@ -44,7 +46,7 @@ class SpriteHandle {
       `left:${SLOT_X[this.slot]}%`,
       "height:100%",
       "aspect-ratio:auto",
-      "transition:opacity .65s cubic-bezier(.2,.7,.2,1), transform .65s cubic-bezier(.2,.7,.2,1), left .65s cubic-bezier(.2,.7,.2,1), filter .35s ease",
+      "transition:opacity .65s cubic-bezier(.2,.7,.2,1), transform .65s cubic-bezier(.2,.7,.2,1), left .65s cubic-bezier(.2,.7,.2,1)",
     ].join(";");
     this.img = document.createElement("img");
     this.img.alt = who;
@@ -70,11 +72,6 @@ class SpriteHandle {
     this.el.style.left = `${SLOT_X[slot]}%`; // left 过渡平滑移位
   }
 
-  setDim(dim: boolean): void {
-    this.el.classList.toggle("gal-spr-dim", dim);
-    this.el.style.filter = dim ? "brightness(.6) saturate(.85)" : "";
-  }
-
   exit(): void {
     this.el.style.opacity = "0";
     const el = this.el;
@@ -91,7 +88,6 @@ export class DomStagePort implements StagePort {
   #bgCurrent: string | null = null;
   #sprites = new Map<string, SpriteHandle>();
   #imageCache = new Map<string, Promise<HTMLImageElement | null>>();
-  #speaking: string | null = null;
   #root: HTMLElement;
 
   constructor(deps: StageDeps) {
@@ -177,7 +173,6 @@ export class DomStagePort implements StagePort {
     if (op.action === "exit") {
       h?.exit();
       this.#sprites.delete(op.who);
-      this.#applyDim();
       return;
     }
     if (!h) {
@@ -211,16 +206,6 @@ export class DomStagePort implements StagePort {
         });
       }
     }
-    this.#applyDim();
-  }
-
-  speak(who: string | null): void {
-    this.#speaking = who;
-    this.#applyDim();
-  }
-
-  #applyDim(): void {
-    for (const [who, h] of this.#sprites) h.setDim(this.#speaking !== null && this.#speaking !== who);
   }
 
   shake(): void {
@@ -244,7 +229,6 @@ export class DomStagePort implements StagePort {
   reset(): void {
     for (const h of this.#sprites.values()) h.exit();
     this.#sprites.clear();
-    this.#speaking = null;
     this.#bgCurrent = null;
     for (const img of this.#bgImgs) img.style.opacity = "0";
   }

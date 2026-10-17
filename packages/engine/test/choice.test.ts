@@ -24,7 +24,6 @@ const content: ContentPort = {
 const stage: StagePort = {
   bg: () => {},
   sprite: () => {},
-  speak: () => {},
   shake: () => {},
   flash: () => {},
   reset: () => {},

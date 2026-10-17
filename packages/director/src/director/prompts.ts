@@ -27,6 +27,8 @@ sprite.action ⊆ enter|exit|move|diff;slot ⊆ left|center|right
 5. endsWith='choice' 时最后一行必须是 choice 行;否则写完即止(流结束=拍结束)
 6. 禁止输出 id、turnNo、apologies、解释文字
 7. ${ALL_AGE_RULE}
+8. sprite 只在角色出场(enter)/退场(exit)/换位(move)时发;台词的表情变化一律写在 say 的
+   emotion 里,禁止对已在场角色重复 enter 或发 diff——重复指令会让表情被重置
 
 示例:
 {"t":"stage","op":{"kind":"sprite","who":"yuki","slot":"center","action":"enter","emotion":"平常"}}

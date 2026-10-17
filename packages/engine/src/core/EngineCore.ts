@@ -68,8 +68,6 @@ export interface EngineSnapshot {
   world: WorldState;
   pendingChoice: PublicChoiceOffer | null;
   lineCount: number;
-  /** 当前发言者(名牌;null=旁白/尚无行)——泵显示时点更新 */
-  currentLine: { who: string; emotion: string } | null;
 }
 
 export interface EngineCoreDeps {
@@ -112,7 +110,6 @@ export class EngineCore {
   #listeners = new Set<() => void>();
   #tw: Typewriter;
   #currentLineId: LineId | null = null;
-  #currentLine: { who: string; emotion: string } | null = null;
   #skipAutoPick: boolean;
   #choiceOverlay: ChoiceOverlay | null = null;
   #onBgm: ((assetId: string | null, fadeMs?: number) => void) | null;
@@ -213,7 +210,6 @@ export class EngineCore {
       world: this.#world,
       pendingChoice: this.#pendingChoice,
       lineCount: this.#ledger.length,
-      currentLine: this.#currentLine,
     };
   }
 
@@ -367,7 +363,6 @@ export class EngineCore {
    */
   replay(entries: readonly LedgerEntry[], visuals: readonly LedgerEntry[] = entries): void {
     this.#cancelDisplay();
-    this.#currentLine = null;
     this.stage.reset();
     this.#readState = [];
     this.#ledger = [...entries];
@@ -383,16 +378,14 @@ export class EngineCore {
       this.resumeTurn(c.turnNo, c.seq);
     }
     this.setPhase("play"); // 读档落地不回"choicing"(选项即时性:重放不恢复等玩家状态)
-    // 视觉终态:按序应用 bg/sprite/speak;shake/flash 是瞬态特效,重放跳过
+    // 视觉终态:按序应用 bg/sprite + 台词表情(与泵显示语义一致);shake/flash 是瞬态特效,重放跳过
     for (const e of visuals) {
       if (e.kind !== "ev") continue;
       const ev = e.ev;
-      if (ev.t === "say") {
-        this.stage.speak(ev.who);
-      } else if (ev.t === "narrate") {
-        this.stage.speak(null);
-      } else if (ev.t === "stage") {
+      if (ev.t === "stage") {
         this.#applyStageOp(ev.op, /* replay */ true);
+      } else if (ev.t === "say" && ev.emotion) {
+        this.#applyStageOp({ kind: "sprite", who: ev.who, action: "diff", emotion: ev.emotion }, /* replay */ true);
       }
     }
     this.#notify();
@@ -459,13 +452,17 @@ export class EngineCore {
   /** 一行 = 打字 + 定步。normal:硬点击门(打完停住等点击——"一句一句对话"的核心);fast/auto:停留;skip:直通 */
   async #showLine(entry: Extract<DisplayEntry, { kind: "line" }>, epoch: number): Promise<boolean> {
     const ev = entry.ev;
-    // ① 显示语义:名牌状态/发言高亮/line:show(名牌与语音的入口)
+    // ① 显示语义:台词表情驱动立绘 + line:show(名牌与语音的入口)。
+    //    say.emotion 是表情的权威来源(2026-10-17 手验:表情只靠编剧显式 sprite op 会被
+    //    下一拍的 enter(平常) 重置——台词到哪句,表情跟到哪句);空表情=保持现状不动。
+    //    diff 对未出场角色被舞台忽略,不会凭空冒立绘。
     this.#armedFor = null;
     this.#armedClicks = 0;
     this.#closeGate();
-    this.#currentLine = ev.t === "say" ? { who: ev.who, emotion: ev.emotion } : null;
     this.#currentLineId = entry.lineId;
-    this.stage.speak(ev.t === "say" ? ev.who : null);
+    if (ev.t === "say" && ev.emotion) {
+      this.#applyStageOp({ kind: "sprite", who: ev.who, action: "diff", emotion: ev.emotion });
+    }
     this.bus.emit("line:show", { lineId: entry.lineId, ev });
     this.#notify();
     // ② 打字(fast/skip 入队即瞬完;打字中点击 → skip + 连点计数)

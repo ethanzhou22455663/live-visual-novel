@@ -27,7 +27,6 @@ export function fakeStage(): StagePort {
   return {
     bg: () => {},
     sprite: (_o: SpriteOp) => {},
-    speak: () => {},
     shake: () => {},
     flash: () => {},
     reset: () => {},

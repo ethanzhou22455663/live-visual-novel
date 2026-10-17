@@ -76,22 +76,19 @@ describe("DomStagePort", () => {
     expect(root.querySelector('[data-who="yukitaka"]')).toBeNull();
   });
 
-  it("speak 高亮发言者:非发言者 dim,旁白恢复", async () => {
+  it("说话人高亮已按 2026-10-17 裁决移除:diff/speak 不再暗化任何立绘", async () => {
     const { root, port } = makePort();
     port.sprite({ who: "enagi", action: "enter", emotion: "笑" });
     await flushImages();
-    port.speak("enagi");
-    const el = root.querySelector<HTMLElement>('[data-who="enagi"]')!;
-    expect(el.style.filter).toBe("");
-    port.speak(null);
-    expect(el.style.filter).toBe("");
-    // 两名角色时:非发言者被暗化
-    // (enagi 在场,模拟第二个角色只需再次 enter 不同 who)
-    port.sprite({ who: "yukitaka", action: "enter" });
+    port.sprite({ who: "yukitaka", action: "enter", slot: "left" });
     await flushImages();
-    port.speak("yukitaka");
-    const enagi = root.querySelector<HTMLElement>('[data-who="enagi"]')!;
-    expect(enagi.style.filter).toContain("brightness(.6)");
+    // 模拟泵显示 say:引擎只发 diff 表情指令,不存在「非发言者变暗」
+    port.sprite({ who: "yukitaka", action: "diff", emotion: "平常" });
+    for (const who of ["enagi", "yukitaka"]) {
+      const el = root.querySelector<HTMLElement>(`[data-who="${who}"]`)!;
+      expect(el.style.filter).toBe("");
+      expect(el.classList.contains("gal-spr-dim")).toBe(false);
+    }
   });
 
   it("bg:已知场景解析 URL,未知场景 warn 且保持;重复切同图 no-op", () => {
@@ -126,7 +123,7 @@ describe("DomStagePort", () => {
     expect(port.snapshot().sprites.enagi).toEqual({ slot: "left", emotion: "笑" });
   });
 
-  it("槽位 left 锚定:34%/50%/66%,水平居中归 translate(-50%)(2026-10-17 修复)", async () => {
+  it("槽位 left 锚定:26%/50%/74%(2026-10-17 二调:全画布素材人物宽~40%,槽距 48% 才不重叠),水平居中归 translate(-50%)", async () => {
     const { root, port } = makePort();
     port.sprite({ who: "enagi", action: "enter", slot: "center", emotion: "平常" });
     const el = root.querySelector<HTMLElement>('[data-who="enagi"]')!;
@@ -134,17 +131,16 @@ describe("DomStagePort", () => {
     expect(el.style.transform).toContain("translate(-50%");
     port.sprite({ who: "yukitaka", action: "enter", slot: "left" });
     const el2 = root.querySelector<HTMLElement>('[data-who="yukitaka"]')!;
-    expect(el2.style.left).toBe("34%");
+    expect(el2.style.left).toBe("26%");
     port.sprite({ who: "enagi", action: "diff", slot: "right" });
-    expect(el.style.left).toBe("66%"); // moveTo 走 left 过渡
+    expect(el.style.left).toBe("74%"); // moveTo 走 left 过渡
     expect(el.style.transition).toContain("left .65s");
   });
 
-  it("exit 移除立绘;speak(null) 不暗化任何人", async () => {
+  it("exit 移除立绘(≥.65s 淡出后移除 DOM)", async () => {
     const { root, port } = makePort();
     port.sprite({ who: "enagi", action: "enter", emotion: "平常" });
     await flushImages();
-    port.speak("enagi");
     port.sprite({ who: "enagi", action: "exit" });
     await new Promise((r) => setTimeout(r, 750)); // 等 exit 的 remove 定时器(≥.65s 淡出,2026-10-17 起 700ms)
     expect(root.querySelector('[data-who="enagi"]')).toBeNull();
