@@ -45,6 +45,7 @@ export class VoicePipeline {
   /** 行代际:新行顶旧行(合成 signal + 句间检查都用它) */
   #lineAbort: AbortController | null = null;
   #token = 0;
+  #muteLogged = new Set<string>(); // 无语音配置角色只提示一次,不刷屏
 
   constructor(deps: VoicePipelineDeps) {
     this.#bus = deps.bus;
@@ -63,7 +64,13 @@ export class VoicePipeline {
   #speak(who: string, text: string, lineId: string): void {
     if (!this.#synth) return this.#log(`[${lineId}] 无 TTS → 静音`);
     if (!this.#content.characterIds.has(who)) return this.#log(`[${lineId}] 未知角色「${who}」→ 静音`);
-    if (this.#voiced && !this.#voiced.has(who)) return this.#log(`[${lineId}] 「${who}」无语音配置 → 静音(主角不配音)`);
+    if (this.#voiced && !this.#voiced.has(who)) {
+      if (!this.#muteLogged.has(who)) {
+        this.#muteLogged.add(who);
+        this.#log(`[${lineId}] 「${who}」无语音配置 → 静音(主角不配音;此后不再提示)`);
+      }
+      return;
+    }
     const mode = this.#clock.mode;
     if (mode === "skip" || mode === "fast") return this.#log(`[${lineId}] 模式 ${mode} → 静音`);
     // 新行顶掉在播行:停旧合成、停旧播放;旧句终态由其 playOut 在 play 收束后补发 done

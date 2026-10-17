@@ -14,7 +14,7 @@ const content: ContentPort = {
   displayNameOf: (who) => (who === "enagi" ? "陽見恵凪" : who),
 };
 
-function makeDeps(root: HTMLElement, warns: string[] = []): StageDeps {
+function makeDeps(root: HTMLElement, warns: string[] = [], logs: string[] = []): StageDeps {
   return {
     root,
     resolve: (kind, who, id) => {
@@ -23,6 +23,7 @@ function makeDeps(root: HTMLElement, warns: string[] = []): StageDeps {
     },
     content,
     warn: (m) => warns.push(m),
+    log: (m) => logs.push(m),
   };
 }
 
@@ -53,8 +54,9 @@ afterEach(() => {
 function makePort() {
   const root = document.createElement("div");
   const warns: string[] = [];
-  const port = createDomStagePort(makeDeps(root, warns));
-  return { root, warns, port };
+  const logs: string[] = [];
+  const port = createDomStagePort(makeDeps(root, warns, logs));
+  return { root, warns, logs, port };
 }
 
 describe("DomStagePort", () => {
@@ -79,9 +81,10 @@ describe("DomStagePort", () => {
     expect(root.querySelector('[data-who="yukitaka"]')).toBeNull();
   });
 
-  it("主角不占人数位:对主角发过 enter 后,唯一可见立绘仍按 1 人表居中", () => {
-    const { root, port } = makePort();
-    port.sprite({ who: "yukitaka", action: "enter" }); // 被忽略,不进 Map
+  it("主角不占人数位:对主角发过 enter 后,唯一可见立绘仍按 1 人表居中;忽略提示只打一次", () => {
+    const { root, logs, port } = makePort();
+    for (let i = 0; i < 3; i++) port.sprite({ who: "yukitaka", action: i === 1 ? "diff" : "enter" }); // 编剧反复发也只提示一次
+    expect(logs.filter((m) => m.includes("无立绘资产"))).toHaveLength(1);
     port.sprite({ who: "enagi", action: "enter", emotion: "平常" });
     const el = root.querySelector<HTMLElement>('[data-who="enagi"]')!;
     expect(el.style.left).toBe("50%"); // 若主角占位,这里会是 2 人表的 26%(截图 3 的 bug)

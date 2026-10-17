@@ -94,6 +94,7 @@ export class DomStagePort implements StagePort {
   #bgFront = 0;
   #bgCurrent: string | null = null;
   #sprites = new Map<string, SpriteHandle>();
+  #noSpriteLogged = new Set<string>(); // 无立绘角色只提示一次,不刷屏
   #imageCache = new Map<string, Promise<HTMLImageElement | null>>();
   #root: HTMLElement;
 
@@ -177,9 +178,13 @@ export class DomStagePort implements StagePort {
       return;
     }
     // 无立绘角色(=主人公类,pack 无 sprites 目录;2026-10-17 裁决「主角不显示立绘」):
-    // 不建句柄不占人数位——否则隐形占位块会把 1 人挤到 2 人表左槽
+    // 不建句柄不占人数位——否则隐形占位块会把 1 人挤到 2 人表左槽。
+    // 编剧(LLM)仍会给主角发 enter,这里持续兜底;提示每角色一次,不刷屏
     if (this.#deps.content.emotionsOf(op.who).size === 0) {
-      this.#deps.log?.(`「${op.who}」无立绘资产 → sprite(${op.action}) 忽略`);
+      if (!this.#noSpriteLogged.has(op.who)) {
+        this.#noSpriteLogged.add(op.who);
+        this.#deps.log?.(`「${op.who}」无立绘资产 → sprite 指令一律忽略(此后不再提示)`);
+      }
       return;
     }
     let h = this.#sprites.get(op.who);
