@@ -4,11 +4,13 @@ import { createDomStagePort } from "../src/presentation/DomStagePort.ts";
 import type { StageDeps } from "../src/presentation/ports.ts";
 
 const content: ContentPort = {
-  characterIds: new Set(["enagi", "yukitaka", "mitsuki"]),
+  characterIds: new Set(["enagi", "yukitaka", "mitsuki", "rin"]),
   sceneIds: new Set(["classroom", "street"]),
   bgmIds: new Set<string>(),
   defaultExprOf: (who) => (who === "enagi" ? "平常" : ""),
-  emotionsOf: (who) => (who === "enagi" ? new Set(["平常", "笑", "惊"]) : new Set<string>()),
+  // yukitaka = 无立绘主角(pack 无 sprites 目录);mitsuki/rin 有立绘表(resolve 返回 null → 占位,不影响几何)
+  emotionsOf: (who) =>
+    who === "enagi" ? new Set(["平常", "笑", "惊"]) : who === "yukitaka" ? new Set<string>() : new Set(["平常"]),
   displayNameOf: (who) => (who === "enagi" ? "陽見恵凪" : who),
 };
 
@@ -67,24 +69,33 @@ describe("DomStagePort", () => {
     expect(decodeURIComponent(img.getAttribute("src") ?? "")).toBe("http://t/spr/enagi/平常.png");
   });
 
-  it("未知角色立绘指令忽略并 warn;无立绘角色 diff 前不出现", () => {
+  it("未知角色忽略并 warn;无立绘角色(主角)enter/diff 都不建句柄", () => {
     const { root, warns, port } = makePort();
     port.sprite({ who: "ghost", action: "enter", emotion: "平常" });
     expect(root.querySelector('[data-who="ghost"]')).toBeNull();
     expect(warns.some((w) => w.includes("未知角色「ghost」"))).toBe(true);
-    port.sprite({ who: "yukitaka", action: "diff", emotion: "" });
+    port.sprite({ who: "yukitaka", action: "enter" }); // 主角:pack 无 sprites 目录
+    port.sprite({ who: "yukitaka", action: "diff", emotion: "平常" });
     expect(root.querySelector('[data-who="yukitaka"]')).toBeNull();
+  });
+
+  it("主角不占人数位:对主角发过 enter 后,唯一可见立绘仍按 1 人表居中", () => {
+    const { root, port } = makePort();
+    port.sprite({ who: "yukitaka", action: "enter" }); // 被忽略,不进 Map
+    port.sprite({ who: "enagi", action: "enter", emotion: "平常" });
+    const el = root.querySelector<HTMLElement>('[data-who="enagi"]')!;
+    expect(el.style.left).toBe("50%"); // 若主角占位,这里会是 2 人表的 26%(截图 3 的 bug)
   });
 
   it("说话人高亮已按 2026-10-17 裁决移除:diff/speak 不再暗化任何立绘", async () => {
     const { root, port } = makePort();
     port.sprite({ who: "enagi", action: "enter", emotion: "笑" });
     await flushImages();
-    port.sprite({ who: "yukitaka", action: "enter", slot: "left" });
+    port.sprite({ who: "mitsuki", action: "enter", slot: "left" });
     await flushImages();
     // 模拟泵显示 say:引擎只发 diff 表情指令,不存在「非发言者变暗」
-    port.sprite({ who: "yukitaka", action: "diff", emotion: "平常" });
-    for (const who of ["enagi", "yukitaka"]) {
+    port.sprite({ who: "mitsuki", action: "diff", emotion: "平常" });
+    for (const who of ["enagi", "mitsuki"]) {
       const el = root.querySelector<HTMLElement>(`[data-who="${who}"]`)!;
       expect(el.style.filter).toBe("");
       expect(el.classList.contains("gal-spr-dim")).toBe(false);
@@ -123,9 +134,9 @@ describe("DomStagePort", () => {
     expect(port.snapshot().sprites.enagi).toEqual({ slot: "center", emotion: "笑" });
 
     // 两人档:slot 名按当前 x 反查(left/right);restore 不回喂 slot,重排即正确布局
-    port.sprite({ who: "yukitaka", action: "enter" });
+    port.sprite({ who: "mitsuki", action: "enter" });
     expect(port.snapshot().sprites.enagi).toEqual({ slot: "left", emotion: "笑" });
-    expect(port.snapshot().sprites.yukitaka).toEqual({ slot: "right", emotion: "" });
+    expect(port.snapshot().sprites.mitsuki).toEqual({ slot: "right", emotion: "" });
   });
 
   it("人数固定布局(2026-10-17 裁决):排位由在场人数唯一决定,编剧 slot 被忽略", () => {
@@ -136,29 +147,32 @@ describe("DomStagePort", () => {
     expect(el1.style.left).toBe("50%");
     expect(el1.style.transform).toContain("translate(-50%, 0) scale(1)");
     // 2 人:26/74(全体重排:出场序从左到右)
-    port.sprite({ who: "yukitaka", action: "enter", slot: "center" });
-    const el2 = root.querySelector<HTMLElement>('[data-who="yukitaka"]')!;
+    port.sprite({ who: "mitsuki", action: "enter", slot: "center" });
+    const el2 = root.querySelector<HTMLElement>('[data-who="mitsuki"]')!;
     expect(el1.style.left).toBe("26%");
     expect(el2.style.left).toBe("74%");
     expect(el2.style.transform).toContain("scale(1)");
-    // 3 人:18/50/82 + 全体缩 .72(素材全画布,1 倍放不下)
-    port.sprite({ who: "mitsuki", action: "enter" });
-    const el3 = root.querySelector<HTMLElement>('[data-who="mitsuki"]')!;
+    // 3 人:18/50/82 + 全体缩 .72(素材全画布,1 倍放不下;origin 脚底,不悬空)
+    port.sprite({ who: "rin", action: "enter" });
+    const el3 = root.querySelector<HTMLElement>('[data-who="rin"]')!;
     expect(el1.style.left).toBe("18%");
     expect(el2.style.left).toBe("50%");
     expect(el3.style.left).toBe("82%");
-    for (const el of [el1, el2, el3]) expect(el.style.transform).toContain("scale(0.72)");
+    for (const el of [el1, el2, el3]) {
+      expect(el.style.transform).toContain("scale(0.72)");
+      expect(el.style.transformOrigin).toBe("50% 100%"); // 缩放锚脚底:不出现「半个人在空中」
+    }
     expect(el1.style.transition).toContain("left .65s"); // 重排平移走过渡
   });
 
   it("exit → 剩余立绘按人数重排(人数变化是唯一平移来源)", () => {
     const { root, port } = makePort();
     port.sprite({ who: "enagi", action: "enter" });
-    port.sprite({ who: "yukitaka", action: "enter" });
     port.sprite({ who: "mitsuki", action: "enter" });
+    port.sprite({ who: "rin", action: "enter" });
     const el1 = root.querySelector<HTMLElement>('[data-who="enagi"]')!;
-    const el2 = root.querySelector<HTMLElement>('[data-who="yukitaka"]')!;
-    port.sprite({ who: "mitsuki", action: "exit" });
+    const el2 = root.querySelector<HTMLElement>('[data-who="mitsuki"]')!;
+    port.sprite({ who: "rin", action: "exit" });
     expect(el1.style.left).toBe("26%"); // 3 人表 → 2 人表
     expect(el2.style.left).toBe("74%");
     expect(el1.style.transform).toContain("scale(1)"); // 缩放复原

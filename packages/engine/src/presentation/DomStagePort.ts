@@ -49,6 +49,7 @@ class SpriteHandle {
       "height:100%",
       "aspect-ratio:auto",
       "opacity:0",
+      "transform-origin:50% 100%", // 缩放以脚底为锚:人数缩放不把人抬离地面
       "transform:translate(-50%, 36px)",
       "transition:opacity .65s cubic-bezier(.2,.7,.2,1), transform .65s cubic-bezier(.2,.7,.2,1), left .65s cubic-bezier(.2,.7,.2,1)",
     ].join(";");
@@ -173,6 +174,12 @@ export class DomStagePort implements StagePort {
   sprite(op: SpriteOp): void {
     if (!this.#deps.content.characterIds.has(op.who)) {
       this.#deps.warn(`未知角色「${op.who}」,立绘指令忽略`);
+      return;
+    }
+    // 无立绘角色(=主人公类,pack 无 sprites 目录;2026-10-17 裁决「主角不显示立绘」):
+    // 不建句柄不占人数位——否则隐形占位块会把 1 人挤到 2 人表左槽
+    if (this.#deps.content.emotionsOf(op.who).size === 0) {
+      this.#deps.log?.(`「${op.who}」无立绘资产 → sprite(${op.action}) 忽略`);
       return;
     }
     let h = this.#sprites.get(op.who);

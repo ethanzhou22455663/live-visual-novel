@@ -295,13 +295,16 @@ async function assemble(): Promise<Assembled> {
   }
 
   // 语音 = 纯旁路观察者(2026-10-17 泵重写):只订阅 line:show,结构上不可能门控对话节奏
+  // voiced 白名单:无语音配置的角色(主角)静音——Router 的默认供体回落只服务在册角色
   if (synth) {
+    const voiced = new Set(Object.values(pack.characters).filter((c) => c.voice).map((c) => c.id));
     void new VoicePipeline({
       bus,
       synth,
       voiceChannel: audio.voiceChannel,
       content,
       clock,
+      voiced,
       log: (m) => console.log("[voice]", m), // 排查埋点(静音卫兵/切句/状态),常驻
     });
   }

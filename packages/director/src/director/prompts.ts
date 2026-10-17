@@ -29,7 +29,9 @@ sprite.action ⊆ enter|exit(只用这两个)
 7. ${ALL_AGE_RULE}
 8. sprite 只在角色出场(enter)/退场(exit)时发;**立绘位置由系统按在场人数自动安排,
    禁止指定位置(不发 slot、不发 move)**;表情变化一律写在 say 的 emotion 里,
-   禁止对已在场角色重复 enter——重复指令只会造成干扰
+   禁止对已在场角色重复 enter——重复指令只会造成干扰。
+   可用表情为 (立繪なし) 的角色(主人公等)没有立绘,禁止对它们发 sprite;
+   它们的台词用 narrate 形式或 say(who 填该角色)均可,系统按谁在说话显示名牌
 
 示例:
 {"t":"stage","op":{"kind":"sprite","who":"yuki","action":"enter"}}

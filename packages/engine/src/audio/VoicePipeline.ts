@@ -27,6 +27,9 @@ export interface VoicePipelineDeps {
   content: ContentPort;
   /** 显示时刻读模式:skip/fast 静音 */
   clock: PresentationClock;
+  /** 有语音配置的角色白名单;在册但不在此表 → 静音(主角无配音,2026-10-17 裁决)。
+   *  省略 = 不做此过滤(测试)。 */
+  voiced?: ReadonlySet<string>;
   /** 排查 log(静音卫兵/请求/状态;bootstrap 注 console.log("[voice]", …);测试可省) */
   log?(msg: string): void;
 }
@@ -37,6 +40,7 @@ export class VoicePipeline {
   #channel: VoiceChannel | null;
   #content: ContentPort;
   #clock: PresentationClock;
+  #voiced: ReadonlySet<string> | null;
   #log: (msg: string) => void;
   /** 行代际:新行顶旧行(合成 signal + 句间检查都用它) */
   #lineAbort: AbortController | null = null;
@@ -48,6 +52,7 @@ export class VoicePipeline {
     this.#channel = deps.voiceChannel;
     this.#content = deps.content;
     this.#clock = deps.clock;
+    this.#voiced = deps.voiced ?? null;
     this.#log = deps.log ?? (() => {});
     // 唯一入口:泵显示台词行时触发(replay 不发 line:show,读档静音,天然正确)
     deps.bus.on("line:show", ({ lineId, ev }) => {
@@ -58,6 +63,7 @@ export class VoicePipeline {
   #speak(who: string, text: string, lineId: string): void {
     if (!this.#synth) return this.#log(`[${lineId}] 无 TTS → 静音`);
     if (!this.#content.characterIds.has(who)) return this.#log(`[${lineId}] 未知角色「${who}」→ 静音`);
+    if (this.#voiced && !this.#voiced.has(who)) return this.#log(`[${lineId}] 「${who}」无语音配置 → 静音(主角不配音)`);
     const mode = this.#clock.mode;
     if (mode === "skip" || mode === "fast") return this.#log(`[${lineId}] 模式 ${mode} → 静音`);
     // 新行顶掉在播行:停旧合成、停旧播放;旧句终态由其 playOut 在 play 收束后补发 done
