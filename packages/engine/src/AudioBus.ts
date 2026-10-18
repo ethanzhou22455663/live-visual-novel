@@ -19,6 +19,8 @@ export class AudioBus {
   private bgm: { src: AudioBufferSourceNode; assetId: string; gain: GainNode } | null = null;
   private buffers = new Map<string, AudioBuffer>();
   private bufferLimit = 60;
+  /** 语音通道单例(2026-10-18):串行播放链在实例内,每次新建会断链乱序 */
+  private voiceChannelInst: VoiceChannel | null = null;
 
   /** 必须在用户手势(点击开始)中调用 */
   unlock(): void {
@@ -42,7 +44,8 @@ export class AudioBus {
 
   get voiceChannel(): VoiceChannel | null {
     if (!this.ctx || !this.gains.voice) return null;
-    return new VoiceChannel(this.ctx, this.gains.voice);
+    this.voiceChannelInst ??= new VoiceChannel(this.ctx, this.gains.voice);
+    return this.voiceChannelInst;
   }
 
   /** 当前 BGM assetId(存档 presentation.bgm 用) */

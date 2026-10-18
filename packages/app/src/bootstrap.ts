@@ -300,11 +300,11 @@ async function assemble(): Promise<Assembled> {
     void new VoicePipeline({
       bus,
       synth,
-      voiceChannel: audio.voiceChannel,
+      voiceChannelOf: () => audio.voiceChannel, // 活引用:装配早于解锁,快照会永远拿到 null
       content,
       clock,
       voiced,
-      log: (m) => console.log("[voice]", m), // 排查埋点(静音卫兵/切句/状态),常驻
+      log: (m) => console.log("[voice]", m), // 排查埋点(静音卫兵/切句/预取/状态),常驻
     });
   }
 

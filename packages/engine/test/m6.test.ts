@@ -51,7 +51,7 @@ describe("M6 fast 语音旁路(坑③)", () => {
     const hangSynth: VoiceSynthPort = {
       enqueueLine: () => [new Promise<ReadyClip>(() => {})],
     };
-    void new VoicePipeline({ bus, synth: hangSynth, voiceChannel: null, content, clock });
+    void new VoicePipeline({ bus, synth: hangSynth, voiceChannelOf: () => null, content, clock });
     const story = fakeStory(
       [{}, {}, pad()],
       [

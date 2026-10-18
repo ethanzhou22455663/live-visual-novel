@@ -63,7 +63,7 @@ function fakeChannel(holdMs = 10) {
 
 function makeVoice(synth: VoiceSynthPort, channel: VoiceChannel | null, clock = new PresentationClock()) {
   const bus = new EventBus();
-  void new VoicePipeline({ bus, synth, voiceChannel: channel, content, clock });
+  void new VoicePipeline({ bus, synth, voiceChannelOf: () => channel, content, clock });
   const states: string[] = [];
   bus.on("voice:state", ({ lineId, state }) => states.push(`${lineId}:${state}`));
   return { bus, clock, states };
@@ -110,6 +110,29 @@ describe("VoicePipeline 观察者", () => {
     v.bus.emit("line:show", { lineId: "1.2", ev: sayEv("い") as never });
     await vi.waitFor(() => expect(synth.calls.length).toBe(2));
     expect(synth.calls[1]!.lineId).toBe("1.2");
+  });
+
+  it("预取:show 第 i 句时后台合成 commit 序列的下两句;显示时消费不重复入队", async () => {
+    const synth = fakeSynth();
+    const v = makeVoice(synth, null);
+    // commit 三句(未来队列;commit 不立即合成)
+    v.bus.emit("line:commit", { lineId: "1.0", event: sayEv("あ") as never });
+    v.bus.emit("line:commit", { lineId: "1.1", event: sayEv("い") as never });
+    v.bus.emit("line:commit", { lineId: "1.2", event: sayEv("う") as never });
+    v.bus.emit("line:show", { lineId: "1.0", ev: sayEv("あ") as never });
+    await vi.waitFor(() => expect(synth.calls.length).toBe(3)); // 1.0 现场 + 1.1/1.2 预取
+    expect(synth.calls.map((c) => c.lineId)).toEqual(["1.0", "1.1", "1.2"]);
+
+    // 显示 1.1:消费预取命中(synth.calls 不新增);future 剩 1.2 已在 prebuilt → 也不新增
+    v.bus.emit("line:show", { lineId: "1.1", ev: sayEv("い") as never });
+    await tick();
+    expect(synth.calls.length).toBe(3);
+    expect(synth.calls.map((c) => c.lineId)).toEqual(["1.0", "1.1", "1.2"]);
+
+    // 显示 1.2:消费预取;future 空 → 无预取
+    v.bus.emit("line:show", { lineId: "1.2", ev: sayEv("う") as never });
+    await tick();
+    expect(synth.calls.length).toBe(3);
   });
 
   it("narrate / 未知角色静音:不发状态、不入队", async () => {
