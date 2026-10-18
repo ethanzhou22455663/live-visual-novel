@@ -8,6 +8,8 @@ import type { LineId, ReadyClip } from "@gal/shared";
 export class VoiceChannel {
   private tail: Promise<unknown> = Promise.resolve();
   private current: AudioBufferSourceNode | null = null;
+  /** stopCurrent 代际:decode 完成后发现代际已变则不起播(审计 M6 的 decode 窗口盲区) */
+  private epoch = 0;
   private cache = new Map<LineId, AudioBuffer>();
   private cacheLimit = 100;
 
@@ -21,6 +23,7 @@ export class VoiceChannel {
 
   /** 播放一个片段;返回在它之前排队的所有片段播完且它自己播完的 Promise */
   play(clip: ReadyClip): Promise<void> {
+    const startEpoch = this.epoch;
     const run = async (prev: Promise<unknown>): Promise<void> => {
       await prev.catch(() => {});
       // SilentProvider 空音频(M6):不开 source,按估时定时等待——
@@ -30,6 +33,7 @@ export class VoiceChannel {
         return;
       }
       const buffer = await this.#decode(clip);
+      if (this.epoch !== startEpoch) return; // decode 期间被 stopCurrent:不起播
       return new Promise<void>((resolve) => {
         const src = this.ctx.createBufferSource();
         src.buffer = buffer;
@@ -47,8 +51,9 @@ export class VoiceChannel {
     return p;
   }
 
-  /** 当前句立即停;后续排队句照播(P1 细化跳过语义) */
+  /** 当前句立即停(decode 中的也不起播);后续排队句照播(P1 细化跳过语义) */
   stopCurrent(): void {
+    this.epoch++;
     try {
       this.current?.stop();
     } catch {

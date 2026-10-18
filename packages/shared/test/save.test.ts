@@ -39,11 +39,10 @@ function makeSave(ledger: LedgerEntry[]): SaveData {
     world: { affection: { enagi: 5 }, flags: { met: true } },
     summary: { ...EMPTY_SUMMARY, summarizedThroughLineId: "" },
     ledger,
-    presentation: { bg: null, bgm: null, sprites: {} },
+    presentation: { bg: null, sprites: {} },
     cursor: cursorAfter(ledger),
     outlineBeatIndex: 0,
     pendingContinuation: false,
-    readState: [],
   };
 }
 

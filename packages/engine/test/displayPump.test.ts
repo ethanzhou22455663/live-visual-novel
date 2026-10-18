@@ -29,7 +29,7 @@ const content: ContentPort = {
 function fakeStage(): StagePort & { calls: StageCall[]; snaps: unknown[] } {
   const calls: StageCall[] = [];
   const snaps: unknown[] = [];
-  const snapshot = () => ({ bg: null, bgm: null, sprites: {} });
+  const snapshot = () => ({ bg: null, sprites: {} });
   return {
     calls,
     snaps,
@@ -219,6 +219,15 @@ describe("显示泵:游标与空闲", () => {
     let idle2 = false;
     void engine.whenIdle().then(() => (idle2 = true));
     await vi.waitFor(() => expect(idle2).toBe(true)); // 已排空 → 立即 resolve
+  });
+
+  it("whenIdle:已 aborted 的 signal 立即 resolve(审计 B4:监听器对先 abort 的 signal 永不触发)", async () => {
+    const { engine } = makeEngine();
+    engine.beginTurn();
+    engine.commitModel({ t: "narrate", text: "行" });
+    const ac = new AbortController();
+    ac.abort(); // 先 abort 再注册
+    await expect(engine.whenIdle(ac.signal)).resolves.toBeUndefined();
   });
 
   it("replay 打断:旧泵退出、旧队列丢弃、新泵接管(epoch 重启,死锁回归)", async () => {

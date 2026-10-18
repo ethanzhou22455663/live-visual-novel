@@ -29,7 +29,7 @@ export type StageOp =
       kind: "sprite";
       who: SpeakerId;
       slot?: "left" | "center" | "right";
-      action: "enter" | "exit" | "move" | "diff";
+      action: "enter" | "exit" | "diff";
       emotion?: EmotionTag;
     }
   | { kind: "bgm"; asset?: string; action: "play" | "stop" | "fade"; fadeMs?: number }

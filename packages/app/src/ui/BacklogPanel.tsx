@@ -1,6 +1,6 @@
 /**
  * 历史记录面板(M6;mock/ui.html 类名 .logrow/.n/.t):ledger 派生只读视图
- * (engine.game.Backlog 的 UI 面)。cap 200(engine 侧同值);
+ * (shared toHistoryItems 的 UI 面(engine/game/Backlog 双实现已删))。cap 200(engine 侧同值);
  * say → 名牌(个人色)+台词,narrate → 暗色旁白,choice → 朱色 ▶ label。
  */
 import { useMemo } from "react";

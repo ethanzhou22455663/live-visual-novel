@@ -10,8 +10,6 @@ export interface StoragePort {
   /** 写失败(quota)抛 StorageQuotaError;其余 IO 错误同样以异常上浮 */
   setRaw(scope: StorageScope, key: string, value: string): void;
   removeRaw(scope: StorageScope, key: string): void;
-  /** 该域下全部键(不含 scope 前缀) */
-  listKeys(scope: StorageScope): string[];
 }
 
 export class StorageQuotaError extends Error {

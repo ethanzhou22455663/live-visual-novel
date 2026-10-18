@@ -2,34 +2,12 @@
  * OpenAI 兼容 chat/completions 客户端(手写 fetch + SSE,plan §1.3 裁决:
  * 不引 AI SDK——自定义 NDJSON 行协议 + 换/加端点零成本)。
  * DeepSeek/GLM/Qwen 同形可换;dev 期 baseUrl 走 "/llm"(Vite proxy 注入 key)。
- * LlmHttpError 带 status:retry.ts 据此判 429/5xx。
+ * 契约类型(ChatMessage/StreamChatOptions/LlmHttpError)在端口 client.ts 上。
  */
+import { LlmHttpError } from "./client.ts";
+import type { ChatMessage, StreamChatOptions } from "./client.ts";
 
-export interface ChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
-
-export interface StreamChatOptions {
-  apiKey: string;
-  messages: ChatMessage[];
-  baseUrl?: string; // 默认 https://api.deepseek.com;dev 传 "/llm" 经 proxy
-  model?: string; // 默认 deepseek-chat
-  temperature?: number;
-  maxTokens?: number;
-  responseFormat?: { type: "json_object" };
-  signal?: AbortSignal;
-}
-
-export class LlmHttpError extends Error {
-  readonly status: number;
-
-  constructor(status: number, body: string) {
-    super(`LLM HTTP ${status}: ${body.slice(0, 300)}`);
-    this.status = status;
-    this.name = "LlmHttpError";
-  }
-}
+export { LlmHttpError }; // 再导出保持既有 import 路径可用(测试/tools)
 
 export type FetchImpl = (url: string, init: RequestInit) => Promise<Response>;
 

@@ -101,7 +101,7 @@ export class GptSovitsProvider implements TtsProvider {
         batch_size: 1,
         speed_factor: req.speed,
       }),
-      signal: req.signal,
+      signal: AbortSignal.any([...(req.signal ? [req.signal] : []), AbortSignal.timeout(20_000)]), // 挂起不停摆串行队列(审计 B5)
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");

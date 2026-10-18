@@ -171,7 +171,6 @@ async function assemble(): Promise<Assembled> {
   // ---- 引擎核心 ----
   const bus = new EventBus();
   const clock = new PresentationClock();
-  clock.start();
   audio.onError = (m) => {
     warnings.push(m);
     bus.emit("engine:warning", { message: m });
@@ -248,7 +247,7 @@ async function assemble(): Promise<Assembled> {
   // ---- 舞台点击推进(mock 同款守卫:按钮/面板/选项/toast 不透传) ----
   stageEl.addEventListener("click", (ev) => {
     const target = ev.target as HTMLElement | null;
-    if (target?.closest("button, a, input, .panel, .mitem, .gal-choice, .toast")) return;
+    if (target?.closest("button, a, input, .panel, .mitem, .gal-choice, .toast, .status-tag")) return;
     if (document.querySelector(".panel")) return; // 面板开着:点击只关面板逻辑归 React
     const ph = engine.phase;
     if (ph !== "play" && ph !== "choicing") return;
@@ -363,13 +362,17 @@ async function assemble(): Promise<Assembled> {
   // 设置初载(M6):字速/音量/语言,重启保留(App 的 lang 初始值同源读取)
   applySettings({ engine, audio }, loadSettings());
 
-  /** 读档共用:恢复引擎+runner → 名牌同步 → 起循环(旧循环若在,先让出一个宏任务) */
+  /** 读档共用:恢复引擎+runner → 名牌同步 → 起循环。
+   *  旧 run() 可能挂在 LLM 退避/流等待里——等它真正退出再起跑,否则单飞保护静默拒绝,
+   *  读档后永不再生成(2026-10-18 审计 H2;50ms 轮询 ×100 = 5s 上限) */
   const resumeAndRun = async (save: SaveData): Promise<void> => {
     audio.unlock(); // 手势入口(菜单/标题按钮)内调用,坑#16
     const r = ensureRunner();
     saves.continueFrom(save);
     syncNamePlate();
-    await new Promise((res) => setTimeout(res, 0)); // 旧 run 循环在微任务里退出,#running 归 false
+    for (let i = 0; r.running && i < 100; i++) {
+      await new Promise((res) => setTimeout(res, 50));
+    }
     await r.run();
   };
 

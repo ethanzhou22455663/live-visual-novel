@@ -37,7 +37,7 @@ export function fakeStage(bg: string | null = "classroom"): StagePort {
     reset: () => {
       current = null;
     },
-    snapshot: () => ({ bg: current, bgm: null, sprites: {} }),
+    snapshot: () => ({ bg: current, sprites: {} }),
     restore: () => {},
   };
 }

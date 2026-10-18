@@ -36,7 +36,7 @@ function fakeStage(): StagePort {
     flash: () => {},
     reset: () => {},
     // bg 与 harness ACT 对齐:幕首 applyScene 判定相同 → 不 commit(ledger 断言不偏移)
-    snapshot: () => ({ bg: "classroom", bgm: null, sprites: {} }),
+    snapshot: () => ({ bg: "classroom", sprites: {} }),
     restore: () => {},
   };
 }

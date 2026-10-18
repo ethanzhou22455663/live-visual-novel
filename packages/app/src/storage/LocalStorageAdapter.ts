@@ -28,7 +28,10 @@ export class LocalStorageAdapter implements StoragePort {
   setRaw(scope: StorageScope, key: string, value: string): void {
     try {
       window.localStorage.setItem(this.#key(scope, key), value);
-    } catch {
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "SecurityError") {
+        throw new Error("浏览器存储不可用(隐私模式/设置限制)");
+      }
       throw new StorageQuotaError();
     }
   }
@@ -41,17 +44,4 @@ export class LocalStorageAdapter implements StoragePort {
     }
   }
 
-  listKeys(scope: StorageScope): string[] {
-    try {
-      const p = `${this.#prefix}${scope}.`;
-      const out: string[] = [];
-      for (let i = 0; i < window.localStorage.length; i++) {
-        const k = window.localStorage.key(i);
-        if (k !== null && k.startsWith(p)) out.push(k.slice(p.length));
-      }
-      return out;
-    } catch {
-      return [];
-    }
-  }
 }

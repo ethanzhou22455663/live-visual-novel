@@ -256,7 +256,7 @@ export class DomStagePort implements StagePort {
   snapshot(): PresentationSnapshot {
     const sprites: PresentationSnapshot["sprites"] = {};
     for (const [who, h] of this.#sprites) sprites[who] = { slot: h.slot, emotion: h.emotion };
-    return { bg: this.#bgCurrent, bgm: null, sprites };
+    return { bg: this.#bgCurrent, sprites };
   }
 
   restore(p: PresentationSnapshot): void {

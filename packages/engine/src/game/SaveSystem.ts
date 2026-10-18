@@ -46,8 +46,8 @@ export class SaveSystem {
   #bus: EventBus;
   #storage: StoragePort;
   #getRunner: () => BeatRunner | null;
-  /** writing 中点受理的手动存档,行边界兑现 */
-  #deferredSlot: { slot: SaveSlot; label?: string } | null = null;
+  /** writing 中点受理的存档(per-slot:反复手动存不同槽互不覆盖;审计 M3) */
+  #deferredSlots = new Map<SaveSlot, string | undefined>();
   #offs: Array<() => void> = [];
 
   constructor(deps: SaveSystemDeps) {
@@ -58,10 +58,10 @@ export class SaveSystem {
 
     this.#offs.push(
       deps.bus.on("display:drained", () => {
-        if (!this.#deferredSlot) return;
-        const d = this.#deferredSlot;
-        this.#deferredSlot = null;
-        this.#writeNow(d.slot, d.label); // 此刻 currentAct 在场 ⇒ pendingContinuation
+        if (this.#deferredSlots.size === 0) return;
+        const pending = [...this.#deferredSlots];
+        this.#deferredSlots.clear();
+        for (const [slot, label] of pending) this.#writeNow(slot, label); // 此刻 currentAct 在场 ⇒ pendingContinuation
       }),
       // choice:resolved 已在 choice 事务点发出 → world 已折叠,快照即所选结果
       deps.bus.on("choice:resolved", () => this.save("auto")),
@@ -87,7 +87,7 @@ export class SaveSystem {
     if (!isSaveSlot(slot)) return { ok: false, reason: "bad-data" };
     const runner = this.#getRunner();
     if (runner?.running && runner.currentAct) {
-      this.#deferredSlot = { slot, label };
+      this.#deferredSlots.set(slot, label);
       return { ok: true, deferred: true };
     }
     return this.#writeNow(slot, label);
@@ -118,7 +118,6 @@ export class SaveSystem {
       this.#engine.warn(`存档失败:${e instanceof Error ? e.message : String(e)}`);
       return { ok: false };
     }
-    this.#bus.emit("save:written", { slot });
     return { ok: true };
   }
 
@@ -155,13 +154,16 @@ export class SaveSystem {
    * pendingContinuation ⇒ BeatRunner 下一轮 run() 跳过导演,直接续写存档拍。
    */
   continueFrom(save: SaveData): void {
-    this.#deferredSlot = null;
+    // deferred 快照语义已失效(ledger 即将回滚):丢弃并明示,不静默
+    if (this.#deferredSlots.size > 0) {
+      this.#engine.warn(`放弃 ${this.#deferredSlots.size} 个未落盘的挂起存档(读档回滚)`);
+      this.#deferredSlots.clear();
+    }
     const runner = this.#getRunner();
     if (runner?.running) runner.stopGeneration();
     this.#engine.restoreFromSave(save);
     runner?.restore({
       summary: save.summary,
-      summarizedThrough: save.summary.summarizedThroughLineId,
       outlineBeatIndex: save.outlineBeatIndex,
       currentAct: save.pendingContinuation ? (save.currentAct?.plan ?? null) : null,
       storyDirection: save.storyDirection ?? "",

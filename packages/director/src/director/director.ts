@@ -89,7 +89,7 @@ export class DirectorService {
             timeoutMs: 30_000,
             signal: req.signal,
           }),
-        { retries: 3, baseMs: 800, onRetry: (a, e, ms) => this.#deps.onError?.(`导演退避重试 #${a}(+${ms}ms):${e}`) },
+        { retries: 3, baseMs: 800, onRetry: (a, e, ms) => this.#deps.onError?.(`导演退避重试 #${a}(+${ms}ms):${e}`), signal: req.signal },
       );
 
     const parse = (raw: string): ParseResult => {

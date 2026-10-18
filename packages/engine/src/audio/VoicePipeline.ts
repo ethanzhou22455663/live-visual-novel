@@ -49,6 +49,12 @@ interface FutureLine {
   text: string;
 }
 
+/** 预取条目:独立取消器——新行顶掉**不**杀预取(它们是要播的未来句),仅淘汰时 abort */
+interface PrebuiltEntry {
+  entries: VoiceEntry[];
+  ctrl: AbortController;
+}
+
 export class VoicePipeline {
   #bus: EventBus;
   #synth: VoiceSynthPort | null;
@@ -63,8 +69,8 @@ export class VoicePipeline {
   #muteLogged = new Set<string>(); // 无语音配置角色只提示一次,不刷屏
   /** commit 已知、尚未显示的台词行(预取的素材;replay 不发 commit → 空 = 预取空转) */
   #future: FutureLine[] = [];
-  /** 预取结果:lineId → 句集 promise(显示时消费,替代现场入队) */
-  #prebuilt = new Map<string, VoiceEntry[]>();
+  /** 预取结果:lineId → 句集 + 独立取消器(显示时消费,替代现场入队) */
+  #prebuilt = new Map<string, PrebuiltEntry>();
 
   constructor(deps: VoicePipelineDeps) {
     this.#bus = deps.bus;
@@ -82,13 +88,18 @@ export class VoicePipeline {
     deps.bus.on("line:commit", ({ lineId, event }) => {
       if (event.t === "say") this.#future.push({ lineId, who: event.who, text: event.text });
     });
+    // 切 fast:已起播句立即停(fast 静音语义含"播中的这句")
+    deps.clock.onModeChange((mode) => {
+      if (mode === "fast") this.#voiceChannelOf()?.stopCurrent();
+    });
   }
 
   #speak(who: string, text: string, lineId: string): void {
     // 消费预取;无预取(回放/读档/future 断供)则现场入队
-    const prebuilt = this.#prebuilt.get(lineId);
+    const hit = this.#prebuilt.get(lineId);
     this.#prebuilt.delete(lineId);
-    if (prebuilt) this.#log(`[${lineId}] prefetch hit`);
+    const prebuilt = hit?.entries;
+    if (hit) this.#log(`[${lineId}] prefetch hit`);
 
     if (!this.#synth) return this.#log(`[${lineId}] 无 TTS → 静音`);
     if (!this.#content.characterIds.has(who)) return this.#log(`[${lineId}] 未知角色「${who}」→ 静音`);
@@ -119,23 +130,27 @@ export class VoicePipeline {
     );
     void this.#playOut(entries, token);
 
-    // 预取下两句(fast 已在上方 return;voiced 白名单内才值得合成)
+    // 预取下两句(fast 已在上方 return;voiced 白名单内才值得合成)。
+    // 每条独立取消器:新行顶掉**不**杀预取,仅淘汰时 abort(2026-10-18 审计 H1:
+    // 绑当前行 signal 会在快速翻页时毒化已消费的下一句 + 把 rejected 留在缓存阻止重试)
     let picked = 0;
     for (const fut of this.#future) {
       if (picked >= PREFETCH_AHEAD) break;
       if (this.#prebuilt.has(fut.lineId)) continue;
       if (this.#voiced && !this.#voiced.has(fut.who)) continue;
-      const entries = this.#enqueueNow(fut.lineId, fut.who, fut.text, this.#lineAbort.signal);
-      for (const e of entries) e.promise.catch(() => {}); // 预取被顶掉/淘汰后 reject 不成 unhandled
-      this.#prebuilt.set(fut.lineId, entries);
+      const ctrl = new AbortController();
+      const entries = this.#enqueueNow(fut.lineId, fut.who, fut.text, ctrl.signal);
+      for (const e of entries) e.promise.catch(() => {}); // 淘汰 abort 后 reject 不成 unhandled
+      this.#prebuilt.set(fut.lineId, { entries, ctrl });
       picked++;
     }
     if (picked > 0) {
       this.#log(`[${lineId}] prefetch ${picked}句`);
-      // 上限保护:丢最旧(其合成自然完成,无引用 GC)
+      // 上限保护:丢最旧,abort 其合成(取消语义落到 provider 的 fetch signal)
       while (this.#prebuilt.size > PREBUILT_CAP) {
         const oldest = this.#prebuilt.keys().next().value;
         if (oldest === undefined) break;
+        this.#prebuilt.get(oldest)!.ctrl.abort();
         this.#prebuilt.delete(oldest);
       }
     }

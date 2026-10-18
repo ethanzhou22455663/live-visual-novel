@@ -135,11 +135,6 @@ export class EngineCore {
     this.#onBgm = deps.onBgm ?? null;
     this.#onSe = deps.onSe ?? null;
     this.#tw = new Typewriter(deps.textEl, { cps: deps.cps ?? 30 });
-    this.#tw.onProgress = (ratio) => {
-      if (this.#currentLineId) {
-        this.bus.emit("typewriter:progress", { lineId: this.#currentLineId, ratio });
-      }
-    };
     if (deps.choiceRoot) {
       this.#choiceOverlay = new ChoiceOverlay({
         bus: this.bus,
@@ -294,11 +289,6 @@ export class EngineCore {
     return { ev, lineId };
   }
 
-  /** M4:校验属组 → 应用 delta → ledger → bus → 放行 BeatRunner。M2 仅占位断言不误用 */
-  get hasPendingChoice(): boolean {
-    return this.#pendingChoice !== null;
-  }
-
   /**
    * 玩家选择(M3 起由 BeatRunner/UI 调):校验属组 → 自身+hidden delta 合并过 schema
    * → world 入账 → ledger 追加 choice 条目 → bus choice:resolved → 回 play → 放行泵的选项停等。
@@ -357,7 +347,6 @@ export class EngineCore {
   replay(entries: readonly LedgerEntry[], visuals: readonly LedgerEntry[] = entries): void {
     this.#cancelDisplay();
     this.stage.reset();
-    this.#readState = [];
     this.#ledger = [...entries];
     this.#world = foldWorld(entries);
     this.#pendingChoice = null; // 选项即时性:重放不恢复"等玩家"状态(未读尾部的 choice 由队列重新 offer)
@@ -559,6 +548,7 @@ export class EngineCore {
   /** 显示队列排空(含选项已决)时 resolve;signal abort 亦 resolve(BeatRunner 的 choice 拍等待用) */
   whenIdle(signal?: AbortSignal): Promise<void> {
     if (!this.#pumping && this.#queue.length === 0) return Promise.resolve();
+    if (signal?.aborted) return Promise.resolve(); // 先于注册已 aborted:监听器永不触发会悬挂(审计 B4)
     return new Promise<void>((res) => {
       const w = { res };
       this.#idleWaiters.add(w);
@@ -587,7 +577,6 @@ export class EngineCore {
 
   #playTimeSec = 0;
   #playClockAt: number | null = null; // Date.now() 锚点;null = 未开始计时
-  #readState: string[] = [];
 
   /** 累计游玩秒数(检查点制:toSaveData/restoreFromSave 落账,无定时器) */
   get playTimeSec(): number {
@@ -638,7 +627,6 @@ export class EngineCore {
       currentAct: parts.currentAct ? { plan: parts.currentAct } : null,
       storyDirection: parts.storyDirection || undefined,
       actsDone: parts.actsDone,
-      readState: [...this.#readState],
       displayedThrough: this.#displayedThrough ?? undefined,
     };
   }
@@ -655,7 +643,6 @@ export class EngineCore {
     const idx = save.displayedThrough ? save.ledger.findIndex((e) => e.lineId === save.displayedThrough) : -1;
     const shown = idx >= 0 ? save.ledger.slice(0, idx + 1) : save.ledger;
     const unseen = idx >= 0 ? save.ledger.slice(idx + 1) : [];
-    this.#readState = [];
     this.replay(save.ledger, shown);
     const fresh = save.ledger.length === 0 && save.cursor.turnNo === 1 && save.cursor.seq === 0;
     if (!fresh) this.resumeTurn(save.cursor.turnNo, save.cursor.seq);

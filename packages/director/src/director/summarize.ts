@@ -75,7 +75,7 @@ export class Summarizer {
           timeoutMs: 30_000,
           signal: req.signal,
         }),
-      { retries: 1, baseMs: 600 },
+      { retries: 1, baseMs: 600, signal: req.signal },
     );
 
     let obj: unknown;

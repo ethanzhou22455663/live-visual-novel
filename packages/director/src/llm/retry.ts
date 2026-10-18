@@ -9,11 +9,32 @@ export interface RetryOptions {
   retries?: number;
   baseMs?: number;
   onRetry?: (attempt: number, err: unknown, delayMs: number) => void;
+  /** abort 即中断退避 sleep(读档/停止时不再干等 800-3200ms;2026-10-18 审计 H2) */
+  signal?: AbortSignal;
 }
 
 export function isRetryable(err: unknown): boolean {
   if (err instanceof LlmHttpError) return err.status === 429 || err.status >= 500;
   return err instanceof TypeError; // fetch 网络层失败
+}
+
+/** 可中断的退避 sleep;abort 时抛 Error 让上层 catch 走各自的兜底 */
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("retry aborted"));
+      return;
+    }
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        reject(new Error("retry aborted"));
+      },
+      { once: true },
+    );
+  });
 }
 
 export async function withRetries<T>(fn: (attempt: number) => Promise<T>, opts: RetryOptions = {}): Promise<T> {
@@ -28,7 +49,7 @@ export async function withRetries<T>(fn: (attempt: number) => Promise<T>, opts: 
       if (attempt === retries || !isRetryable(err)) throw err;
       const delayMs = baseMs * 2 ** attempt + Math.floor(Math.random() * 300);
       opts.onRetry?.(attempt + 1, err, delayMs);
-      await new Promise((r) => setTimeout(r, delayMs));
+      await delay(delayMs, opts.signal);
     }
   }
   throw lastErr;

@@ -171,6 +171,25 @@ describe("WriterService.generateBeat", () => {
     expect(done).toMatchObject({ kind: "done", result: "choice" });
   });
 
+  it("空流(HTTP 200 零行)→ 续写重试一次;仍空 → aborted(canContinue) 防大纲烧穿(审计 A4)", async () => {
+    const llm = fakeLlm({ chatStream: () => ndStream(...[]) });
+    const chunks = await collect(makeWriter(llm).generateBeat(makeReq()));
+    expect(llm.streamCalls.length).toBe(2); // 空流纠正一次
+    const aborted = chunks.find((c) => c.kind === "aborted");
+    expect(aborted).toMatchObject({ kind: "aborted", canContinue: true, reason: "LLM 连续空流" });
+    expect(chunks.some((c) => c.kind === "done")).toBe(false);
+  });
+
+  it("外部再入(count≥1)后禁内部纠正:overrun 也不二次调用(审计 D2 隐性行为显式化)", async () => {
+    const lines = Array.from({ length: 15 }, (_, i) => ({ t: "say", who: "enagi", emotion: "平常", text: `せりふ${i}` }));
+    const llm = fakeLlm({ chatStream: () => ndStream(...lines) });
+    const chunks = await collect(
+      makeWriter(llm).generateBeat(makeReq({ continuation: { reason: "前次生成中断,继续本幕", count: 1 } })),
+    );
+    expect(llm.streamCalls.length).toBe(1); // 内部 overrun 纠正被禁:收束责任交回 BeatRunner
+    expect(chunks.find((c) => c.kind === "done")).toMatchObject({ kind: "done", result: "sceneEnd" });
+  });
+
   it("BeatRunner 再入:req.ledgerTail + continuation 进续写消息(禁原样重试)", async () => {
     const llm = fakeLlm({ chatStream: () => ndStream({ t: "narrate", text: "つづき。" }) });
     await collect(

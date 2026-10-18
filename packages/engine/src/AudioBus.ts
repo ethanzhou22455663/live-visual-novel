@@ -17,6 +17,8 @@ export class AudioBus {
   private gains: Partial<Record<Channel, GainNode>> = {};
   private volumes: Record<Channel, number> = { bgm: 0.6, se: 0.8, voice: 1 };
   private bgm: { src: AudioBufferSourceNode; assetId: string; gain: GainNode } | null = null;
+  /** BGM 请求代际:慢解码反超时丢弃 stale 结果(审计 M2) */
+  #bgReqId = 0;
   private buffers = new Map<string, AudioBuffer>();
   private bufferLimit = 60;
   /** 语音通道单例(2026-10-18):串行播放链在实例内,每次新建会断链乱序 */
@@ -48,11 +50,6 @@ export class AudioBus {
     return this.voiceChannelInst;
   }
 
-  /** 当前 BGM assetId(存档 presentation.bgm 用) */
-  get currentBgm(): string | null {
-    return this.bgm?.assetId ?? null;
-  }
-
   /**
    * 播放/切换 BGM:同曲幂等;新曲 0→base 淡入,旧曲 ramp→0 后 stop。
    * ctx 未解锁时静默忽略(标题前不会有 bgm 指令)。
@@ -60,6 +57,7 @@ export class AudioBus {
   async playBgm(assetId: string, url: string, fadeMs = 800): Promise<void> {
     if (!this.ctx || !this.gains.bgm) return;
     if (this.bgm?.assetId === assetId) return;
+    const reqId = ++this.#bgReqId;
     let buffer: AudioBuffer;
     try {
       buffer = await this.#decode(assetId, url);
@@ -67,6 +65,7 @@ export class AudioBus {
       this.onError?.(`BGM 加载失败 ${assetId}:${e instanceof Error ? e.message : String(e)}`);
       return;
     }
+    if (reqId !== this.#bgReqId) return; // decode 期间又来了别的指令(stop/换曲):stale 丢弃
     this.#fadeOutBgm(fadeMs);
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
@@ -83,6 +82,7 @@ export class AudioBus {
   }
 
   stopBgm(fadeMs = 800): void {
+    this.#bgReqId++; // 在途 decode 完成后不得起播
     this.#fadeOutBgm(fadeMs);
   }
 

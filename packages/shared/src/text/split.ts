@@ -49,7 +49,7 @@ export function splitSentences(text: string, maxLen = 100): string[] {
   };
 
   for (let i = 0; i < text.length; i++) {
-    const ch = text[i] as string;
+    const ch = [...text][i] as string;
     if (OPENERS.has(ch)) depth++;
     if (CLOSERS.has(ch)) depth = Math.max(0, depth - 1);
 

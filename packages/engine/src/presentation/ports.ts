@@ -22,7 +22,7 @@ export interface StageDeps {
 export interface SpriteOp {
   who: string;
   slot?: "left" | "center" | "right";
-  action: "enter" | "exit" | "move" | "diff";
+  action: "enter" | "exit" | "diff";
   emotion?: string;
 }
 

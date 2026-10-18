@@ -4,7 +4,7 @@ import type { ModelScriptEvent } from "@gal/shared";
 import { EngineCore } from "../src/core/EngineCore.ts";
 import { EventBus } from "../src/core/EventBus.ts";
 import { PresentationClock } from "../src/core/PresentationClock.ts";
-import { backlogOf } from "../src/game/Backlog.ts";
+import { toHistoryItems } from "@gal/shared";
 import type { SpriteOp, StageDeps, StagePort } from "../src/presentation/ports.ts";
 
 const content: ContentPort = {
@@ -27,7 +27,7 @@ function fakeStage(): StagePort & { calls: StageCall[] } {
     shake: () => calls.push({ op: "shake", args: [] }),
     flash: () => calls.push({ op: "flash", args: [] }),
     reset: () => calls.push({ op: "reset", args: [] }),
-    snapshot: () => ({ bg: null, bgm: null, sprites: {} }),
+    snapshot: () => ({ bg: null, sprites: {} }),
     restore: () => calls.push({ op: "restore", args: [] }),
   };
 }
@@ -192,11 +192,11 @@ describe("Backlog(ledger 派生,坑①)", () => {
     });
     // 手动落一条 choice 结果(BeatRunner/M4 的职责,这里直接补 ledger)
     engine.ledger.push({ kind: "choice", lineId: "1.3", turnNo: 1, seq: 3, optionId: "a", label: "選んだ!" });
-    const items = backlogOf(engine.ledger);
-    expect(items.map((i) => i.kind)).toEqual(["say", "narrate", "choice"]);
-    expect(items[2]!.text).toBe("選んだ!");
+    const items = toHistoryItems(engine.ledger);
+    expect(items.map((i) => i.t)).toEqual(["say", "narrate", "choice"]);
+    expect(items[2]).toMatchObject({ t: "choice", label: "選んだ!" });
 
     for (let i = 0; i < 250; i++) engine.commitModel({ t: "narrate", text: `n${i}` });
-    expect(backlogOf(engine.ledger).length).toBe(200);
+    expect(toHistoryItems(engine.ledger, 200).length).toBe(200);
   });
 });

@@ -36,6 +36,6 @@ describe("EventBus", () => {
 
   it("无监听器 emit 不抛错", () => {
     const bus = new EventBus();
-    expect(() => bus.emit("clock:mode", { mode: "fast" })).not.toThrow();
+    expect(() => bus.emit("voice:state", { lineId: "1.0", state: "muted" })).not.toThrow();
   });
 });

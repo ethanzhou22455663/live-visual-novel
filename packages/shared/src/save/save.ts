@@ -65,7 +65,6 @@ export const SaveDataSchema = z.object({
   cursor: z.object({ turnNo: z.number().int(), seq: z.number().int() }),
   outlineBeatIndex: z.number().int().nullable(),
   pendingContinuation: z.boolean(),
-  readState: z.array(z.string()),
   /** 最后已看行(显示泵游标;缺省 = 旧档,读档视为全部已看。2026-10-17 显示泵重写) */
   displayedThrough: z.string().optional(),
   /** 全局走向(总导演上次输出;缺省 = 旧档,读档视为未生成,下次强制刷新) */
@@ -93,7 +92,6 @@ export interface SaveData {
   cursor: { turnNo: number; seq: number };
   outlineBeatIndex: number | null;
   pendingContinuation: boolean;
-  readState: string[];
   displayedThrough?: string;
   storyDirection?: string;
   currentAct?: { plan: ActPlan } | null;
@@ -132,5 +130,13 @@ export function migrateSave(raw: unknown): SaveData {
     if (!step) throw new Error(`缺少 v${v} → v${v + 1} 迁移步骤`);
     d = step(d);
   }
-  return SaveDataSchema.parse(d) as SaveData;
+  try {
+    return SaveDataSchema.parse(d) as SaveData;
+  } catch (e) {
+    if (e instanceof Error && e.name === "ZodError") {
+      // 面板文案直接展示错误消息:截断防全文 JSON 巨串(审计 L10)
+      throw new Error(String(e.message).slice(0, 200));
+    }
+    throw e;
+  }
 }

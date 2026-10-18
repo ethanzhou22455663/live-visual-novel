@@ -19,14 +19,9 @@ const DEFAULT_PUNCT_PAUSE_MS: Record<string, number> = {
 export interface TypewriterOptions {
   /** 每秒字数 */
   cps?: number;
-  /** 额外标点停顿(覆盖默认表) */
-  punctPauseMs?: Record<string, number>;
 }
 
 export class Typewriter {
-  /** 进度回调(打字机与语音节奏配合用) */
-  onProgress: ((ratio: number) => void) | null = null;
-
   /** 正在逐字上屏中(advance 的两段语义:第一击补完文本,第二击快进语音/停留) */
   get typing(): boolean {
     return this.resolveDone !== null;
@@ -49,7 +44,7 @@ export class Typewriter {
     this.skipping = false;
     const chars = [...text];
     const cps = this.opts.cps ?? 30;
-    const pauseOf = (ch: string) => this.opts.punctPauseMs?.[ch] ?? DEFAULT_PUNCT_PAUSE_MS[ch] ?? 0;
+    const pauseOf = (ch: string) => DEFAULT_PUNCT_PAUSE_MS[ch] ?? 0;
     return new Promise<void>((resolve) => {
       this.resolveDone = resolve;
       const startAt = performance.now();
@@ -58,7 +53,6 @@ export class Typewriter {
       const step = () => {
         if (this.skipping) {
           this.el.textContent = text;
-          this.onProgress?.(1);
           this.#finish();
           return;
         }
@@ -69,7 +63,6 @@ export class Typewriter {
           this.el.textContent = chars.slice(0, target).join("");
           for (let i = shown; i < target; i++) pauseAcc += pauseOf(chars[i] ?? "");
           shown = target;
-          this.onProgress?.(chars.length ? shown / chars.length : 1);
         }
         if (shown >= chars.length) {
           this.#finish();

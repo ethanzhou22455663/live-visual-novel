@@ -37,8 +37,6 @@ export class BeatRunner {
   #abort: AbortController | null = null;
   #outlineBeatIndex: number | null;
   #summary: Summary = EMPTY_SUMMARY;
-  /** 摘要游标:上次 summarize 覆盖到的 lineId("" = 从未摘要) */
-  #summarizedThrough: string = "";
   /** 全局走向(总导演输出;"" = 尚未生成) */
   #direction = "";
   /** 已完成幕数(走向刷新节拍 %5 用) */
@@ -95,7 +93,6 @@ export class BeatRunner {
   newGame(): void {
     if (this.#running) this.stopGeneration();
     this.#summary = EMPTY_SUMMARY;
-    this.#summarizedThrough = "";
     this.#direction = "";
     this.#actsDone = 0;
     this.#lastActHadChoice = false;
@@ -161,11 +158,16 @@ export class BeatRunner {
         }
 
         // ---- ④ 幕尾:sceneEnd 摘要(失败沿用旧摘要,绝不阻塞)+ 游标推进 ----
+        // 空幕(零产出)不推进大纲游标——防 LLM 空流把骨架烧穿(2026-10-18 审计 A4)
         if (end === "sceneEnd") {
           await this.#summarize(abort.signal);
           if (abort.signal.aborted) break;
         }
-        if (this.#outlineBeatIndex !== null && this.#deps.outlineBeatCount) {
+        if (
+          this.#outlineBeatIndex !== null &&
+          this.#deps.outlineBeatCount &&
+          this.#actTail(turnNo).length > 0
+        ) {
           this.#outlineBeatIndex = Math.min(this.#outlineBeatIndex + 1, this.#deps.outlineBeatCount);
         }
         this.#actsDone++;
@@ -261,7 +263,8 @@ export class BeatRunner {
             break;
           }
           case "aborted":
-            if (!chunk.canContinue) {
+            // 外部停止不报错(writer 侧静默 return;此处兜流式 aborted 路径)
+            if (!chunk.canContinue && !abort.signal.aborted) {
               sawFatalAbort = true;
               bus.emit("generation:status", { phase: "aborted", turnNo, error: chunk.reason });
             }
@@ -342,7 +345,6 @@ export class BeatRunner {
         names,
         signal,
       });
-      this.#summarizedThrough = through;
     } catch (e) {
       this.#deps.onError?.(`摘要失败,沿用旧摘要:${e instanceof Error ? e.message : String(e)}`);
     }
@@ -351,14 +353,12 @@ export class BeatRunner {
   /** M5 存档读恢复(runner 侧:摘要/走向/游标/幕进行中;引擎侧走 EngineCore.restoreFromSave) */
   restore(state: {
     summary: Summary;
-    summarizedThrough: string;
     outlineBeatIndex: number | null;
     currentAct?: ActPlan | null;
     storyDirection?: string;
     actsDone?: number;
   }): void {
     this.#summary = state.summary;
-    this.#summarizedThrough = state.summarizedThrough;
     this.#outlineBeatIndex = state.outlineBeatIndex;
     this.#direction = state.storyDirection ?? "";
     this.#actsDone = state.actsDone ?? 0;

@@ -1,10 +1,10 @@
 /**
  * TtsRouter(plan §1.7):按序降级合同——失败永久切下一家、链尾耗尽上抛、
- * abort/SynthCancelledError 不是故障不降级、healthCheck 委派当前。
+ * abort 不是故障不降级(队列级 cancel API 已删,signal abort 覆盖)、healthCheck 委派当前。
  */
 import { describe, expect, it, vi } from "vitest";
 import type { ReadyClip, SynthRequest, TtsProvider } from "@gal/shared";
-import { SynthCancelledError, TtsRouter } from "../src/index.ts";
+import { TtsRouter } from "../src/index.ts";
 
 function req(over: Partial<SynthRequest> = {}): SynthRequest {
   return { lineId: "1.0", text: "テスト", ...over } as SynthRequest;
@@ -70,18 +70,6 @@ describe("TtsRouter", () => {
     const ac = new AbortController();
     ac.abort();
     await expect(r.synthesize(req({ signal: ac.signal }))).rejects.toThrow();
-    expect(onDegraded).not.toHaveBeenCalled();
-    expect(r.activeId).toBe("a");
-  });
-
-  it("SynthCancelledError 不降级:同实例原样上抛", async () => {
-    const cancelled = new SynthCancelledError("1.0");
-    const a = fake("a", async () => {
-      throw cancelled;
-    });
-    const onDegraded = vi.fn();
-    const r = new TtsRouter({ providers: [a], onDegraded });
-    await expect(r.synthesize(req())).rejects.toBe(cancelled);
     expect(onDegraded).not.toHaveBeenCalled();
     expect(r.activeId).toBe("a");
   });

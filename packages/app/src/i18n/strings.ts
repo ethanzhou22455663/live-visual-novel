@@ -18,9 +18,7 @@ export interface Strings {
   backlog: string;
   stop: string;
   voiceFail: (n: number) => string;
-  close: string;
   textSpeed: string;
-  volume: string;
   bgm: string;
   se: string;
   voice: string;
@@ -35,7 +33,6 @@ export interface Strings {
   doSave: string;
   doLoad: string;
   doDelete: string;
-  narration: string;
 }
 
 export const STRINGS: Record<Lang, Strings> = {
@@ -53,9 +50,7 @@ export const STRINGS: Record<Lang, Strings> = {
     backlog: "バックログ",
     stop: "■ 停止",
     voiceFail: (n) => `音声失敗×${n}`,
-    close: "閉じる",
     textSpeed: "文字速度",
-    volume: "音量",
     bgm: "BGM",
     se: "効果音",
     voice: "音声",
@@ -70,7 +65,6 @@ export const STRINGS: Record<Lang, Strings> = {
     doSave: "保存",
     doLoad: "ロード",
     doDelete: "消去",
-    narration: "ナレーション",
   },
   zh: {
     title: "柠檬水工厂",
@@ -86,9 +80,7 @@ export const STRINGS: Record<Lang, Strings> = {
     backlog: "历史记录",
     stop: "■ 停止",
     voiceFail: (n) => `语音失败×${n}`,
-    close: "关闭",
     textSpeed: "文字速度",
-    volume: "音量",
     bgm: "背景音乐",
     se: "音效",
     voice: "语音",
@@ -103,7 +95,6 @@ export const STRINGS: Record<Lang, Strings> = {
     doSave: "保存",
     doLoad: "读取",
     doDelete: "删除",
-    narration: "旁白",
   },
 };
 

@@ -9,7 +9,7 @@ import { ACT, makePack } from "./helpers.ts";
 describe("renderPackTables", () => {
   it("三张表全部来自 manifest,零硬编码", () => {
     const t = renderPackTables(makePack());
-    expect(t).toContain("- enagi / 陽見恵凪 / 主题色 #ff8fb4 / 可用表情: 平常|笑");
+    expect(t).toContain("- enagi / 陽見恵凪 / accent #ff8fb4 / expressions: 平常|笑");
     expect(t).toContain("yukitaka");
     expect(t).toContain("(no sprite)");
     expect(t).toContain("[AVAILABLE SCENES] 教室");

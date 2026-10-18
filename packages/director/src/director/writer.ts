@@ -36,6 +36,7 @@ export async function* withWatchdog(
       const timeout = new Promise<never>((_, rej) => {
         timer = setTimeout(() => rej(new WatchdogError()), ms);
       });
+      timeout.catch(() => {}); // 输家 timer:race 已 settle 时 reject 不成 unhandled
       try {
         const r = (await Promise.race([it.next(), timeout])) as IteratorResult<string>;
         if (r.done) return;
@@ -79,7 +80,10 @@ export class WriterService {
     // 幕级行预算:各小节 maxLines 之和 + 余量(overrun 检查用)
     const lineBudget = req.act.beats.reduce((sum, b) => sum + b.maxLines, 0) + 8;
     const wantsChoice = req.act.beats.some((b) => b.endsWith === "choice");
-    // 内部续写预算:1 次(overrun/missing-choice 合并计);watchdog/parse 由 BeatRunner 再入
+    // 内部续写预算:1 次(overrun/missing-choice/空流 合并计)。
+    // **隐性行为显式化(2026-10-18 审计 D2)**:初值取 req.continuation.count——
+    // BeatRunner 每次再入(watchdog/parse/choice/空流)都带 count≥1,即外部再入过的幕
+    // 不再做内部纠正,直接把收束责任交回 BeatRunner 的再入循环,避免两级预算互相放大
     let internalContinuation = req.continuation?.count ?? 0;
     let reason = req.continuation?.reason;
     let committedEvents: ModelScriptEvent[] = [];
@@ -160,6 +164,9 @@ export class WriterService {
         } catch (e) {
           if (cutByChoice) {
             // choice 硬切引发的中断(预期路径):不当失败
+          } else if (signal.aborted) {
+            // 外部停止(ESC/停止钮):静默收尾,不报"LLM 流失败"(2026-10-18 审计 M4)
+            return;
           } else if (e instanceof WatchdogError) {
             failure = "watchdog";
           } else if (e instanceof ParserAbortedError) {
@@ -175,8 +182,22 @@ export class WriterService {
           return;
         }
         if (failure) {
-          // 半行原子丢弃已由 parser.abort 负责;已提交行保留生效
+          // 原子性由"每次尝试 new ScriptStreamParser"保证(失败即整体丢弃旧 parser 与半行 tail)
           yield { kind: "aborted", reason: failure === "watchdog" ? "生成停滞" : "连续坏行", canContinue: true };
+          return;
+        }
+
+        // 空流(HTTP 200 但零行):不算幕尾——续写重试,防大纲被空幕烧穿(审计 A4)。
+        // 两续写预算已由 internalContinuation 上限兜住:仍空则 done(sceneEnd) 交给
+        // BeatRunner 的"幕有产出才推进游标"兜底
+        if (lineCount === 0 && committedEvents.length === 0) {
+          if (internalContinuation < 1) {
+            internalContinuation++;
+            reason = "empty stream: the model returned nothing, write this act from the beginning";
+            this.#deps.onError?.("编剧空流,续写重试");
+            continue;
+          }
+          yield { kind: "aborted", reason: "LLM 连续空流", canContinue: true };
           return;
         }
 

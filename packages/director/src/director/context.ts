@@ -5,7 +5,7 @@
  */
 import type { ActPlan, ContentPack, Summary, WorldState, WorldBookEntry } from "@gal/shared";
 import type { HistoryItem, StageState } from "@gal/shared";
-import type { ChatMessage } from "../llm/deepseek.ts";
+import type { ChatMessage } from "../llm/client.ts";
 import { directorSystem, WRITER_SYSTEM, continuationBlock } from "./prompts.ts";
 import { renderHistory } from "./history.ts";
 import { matchWorldbook, renderWorldbookBlock } from "./worldbook.ts";
@@ -16,7 +16,7 @@ export function renderPackTables(pack: ContentPack): string {
     .map((c) => {
       const emotions = Object.keys(c.sprites);
       const emo = emotions.length ? emotions.join("|") : "(no sprite)";
-      return `- ${c.id} / ${c.displayName} / 主题色 ${c.color} / 可用表情: ${emo}`;
+      return `- ${c.id} / ${c.displayName} / accent ${c.color} / expressions: ${emo}`;
     })
     .join("\n");
   const scenes = Object.keys(pack.scenes).join("|");
@@ -33,17 +33,17 @@ function renderWorld(world: WorldState): string {
   const flags = Object.entries(world.flags)
     .map(([k, v]) => `${k}=${String(v)}`)
     .join(", ");
-  return `好感度: ${aff || "(なし)"} ｜ flags: ${flags || "(なし)"}`;
+  return `affection: ${aff || "(none)"}, flags: ${flags || "(none)"}`;
 }
 
 function renderSummary(summary: Summary): string {
   const threads = summary.threads.length
-    ? `\n【未决伏笔】${summary.threads.map((t) => `・${t.title}(${t.status})`).join("\n")}`
+    ? `\n[OPEN THREADS]\n${summary.threads.map((t) => `- ${t.title} (${t.status})`).join("\n")}`
     : "";
   const updates = Object.entries(summary.charUpdates)
-    .map(([id, u]) => `・${id}: ${u}`)
+    .map(([id, u]) => `- ${id}: ${u}`)
     .join("\n");
-  return `${summary.facts || "(まだ要約なし)"}${updates ? `\n【角色动态】\n${updates}` : ""}${threads}`;
+  return `${summary.facts || "(no summary yet)"}${updates ? `\n[CHARACTER UPDATES]\n${updates}` : ""}${threads}`;
 }
 
 /** 大纲 `- ` 行 = 一拍;在 index 行前插 ▶;无结构返回原文 */
@@ -142,7 +142,7 @@ export function buildWriterMessages(input: WriterContextInput): ChatMessage[] {
     `[RECENT HISTORY] ${renderHistory(input.history, 12, 2000, input.names) || "(none)"}`,
   ];
   if (input.continuationReason !== undefined) {
-    parts.push(continuationBlock(input.continuationReason, input.ledgerTail ?? "(なし)"));
+    parts.push(continuationBlock(input.continuationReason, input.ledgerTail ?? "(none)"));
   }
   return [
     { role: "system", content: `${WRITER_SYSTEM}\n\n${input.tables}` },

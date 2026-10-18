@@ -26,7 +26,7 @@ const stage: StagePort = {
   shake: () => {},
   flash: () => {},
   reset: () => {},
-  snapshot: () => ({ bg: null, bgm: null, sprites: {} }),
+  snapshot: () => ({ bg: null, sprites: {} }),
   restore: () => {},
 };
 

@@ -4,7 +4,7 @@
  */
 import type { ActPlan, ContentPack } from "@gal/shared";
 import type { ChatOnceOptions, LlmClient } from "../src/llm/client.ts";
-import type { StreamChatOptions } from "../src/llm/deepseek.ts";
+import type { StreamChatOptions } from "../src/llm/client.ts";
 
 export function makePack(): ContentPack {
   return {

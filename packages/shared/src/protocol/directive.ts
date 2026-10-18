@@ -1,8 +1,7 @@
 /**
- * 幕设计 ActPlan + 拍级指令 BeatDirective(2026-10-18 幕制重构):
+ * 幕设计 ActPlan(2026-10-18 幕制重构):
  * - 总导演每幕一次输出 ActPlan:一幕 = 一个场景(bg+bgm)内连续 1〜6 个分段
- * - beats 降级为编剧的创作指引(分段 goal),不再是调用/存档边界
- * - BeatDirective 是幕内派生的编剧调用指令(scene + 单段字段 + actGoal)
+ * - beats 是编剧的创作指引(分段 goal),不是调用/存档边界
  * - maxLines schema 界 1..30,DirectorService 收到后 clamp 进 [6,14](节奏硬预算)
  */
 import { z } from "zod";
@@ -27,20 +26,6 @@ export const ActPlanSchema = z.object({
 });
 
 export type ActPlan = z.infer<typeof ActPlanSchema>;
-export type ActBeat = z.infer<typeof ActBeatSchema>;
-
-export const BeatDirectiveSchema = z.object({
-  scene: SceneSchema,
-  /** 本段目标(幕设计派生) */
-  goal: z.string().min(1),
-  endsWith: z.enum(["choice", "beatEnd", "sceneEnd"]),
-  maxLines: z.number().int().min(1).max(30),
-  /** 幕目标(编剧看到幕上下文) */
-  actGoal: z.string().optional(),
-  toneHint: z.string().optional(),
-});
-
-export type BeatDirective = z.infer<typeof BeatDirectiveSchema>;
 
 /** 总导演彻底失败时的兜底(§1):同场景、泛化目标、1 段 sceneEnd 收束;bg/cast 由调用方决定。
  *  goal 文案进编剧上下文(给 LLM)→ 英语(提示词语言方针 2026-10-18) */

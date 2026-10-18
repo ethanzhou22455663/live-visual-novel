@@ -8,25 +8,13 @@ import type { ScriptEvent } from "../protocol/script.ts";
 
 export type LineId = string;
 
-/** 舞台呈现快照(存档/恢复用;bgm 归音频侧单独记录) */
+/** 舞台呈现快照(存档/恢复用;bgm 不持久化——音频侧不恢复,下个非 null 幕设计自然重切) */
 export interface PresentationSnapshot {
   bg: string | null;
-  bgm: string | null;
   sprites: Record<string, { slot: "left" | "center" | "right"; emotion: string }>;
 }
 
 // ---------- TTS(plan §2.3) ----------
-
-export interface VoiceConfig {
-  /** 即角色 charId(plan §2.8);同角色多情绪 = 单权重 + ref_audio 差分 */
-  configId: string;
-  refAudioPath: string;
-  promptText: string;
-  promptLang: "ja" | "zh" | "en";
-  /** P0 未用:预训练/微调权重绝对路径(服务端本机) */
-  gptWeightsPath?: string;
-  sovitsWeightsPath?: string;
-}
 
 export interface SynthRequest {
   lineId: LineId;
@@ -58,7 +46,7 @@ export interface TtsProvider {
 export type ClockMode = "normal" | "fast" | "auto";
 
 export interface GameEventMap {
-  "engine:phase": { phase: "title" | "play" | "choicing" | "pause" | "menu" | "ending" };
+  "engine:phase": { phase: "title" | "play" | "choicing" };
   "generation:status": {
     phase: "idle" | "directing" | "writing" | "choicing" | "aborted" | "error";
     turnNo: number;
@@ -66,13 +54,12 @@ export interface GameEventMap {
   };
   /** Tier-2 窥视文本(未提交行的半截):只进 ghost 区,绝不进状态/TTS */
   "generation:preview": { text: string };
-  /** 事务点:ledger 持久化通知(backlog/诊断挂这;演出一律看 line:show,不看它。replay 不发) */
+  /** 事务点:ledger 持久化通知(VoicePipeline 预取记账挂这。replay 不发) */
   "line:commit": { event: ScriptEvent; lineId: LineId };
   /** 泵显示行(打字开始)时发:名牌/▼/语音入口都挂这(replay 不发;2026-10-17 显示泵重写) */
   "line:show": { lineId: LineId; ev: Extract<ScriptEvent, { t: "say" | "narrate" }> };
   /** 显示队列排空(泵空闲):SaveSystem 在此兑现挂起存档;displayedThrough = 最后已看行 */
   "display:drained": { displayedThrough: LineId | null };
-  "typewriter:progress": { lineId: LineId; ratio: number };
   "typewriter:done": { lineId: LineId };
   /** 只携带公开视图;hidden 后果仅 resolveChoice 路径可见(plan §1.5) */
   "choice:offered": { choice: PublicChoiceOffer };
@@ -81,10 +68,8 @@ export interface GameEventMap {
     lineId: LineId;
     state: "synth" | "ready" | "playing" | "done" | "failed" | "muted";
   };
-  "clock:mode": { mode: ClockMode };
-  /** 一拍收束(BeatRunner 在拍尾、摘要/大纲推进之后发;M5 自动存档挂这里) */
+  /** 一幕收束(BeatRunner 幕尾发;M5 自动存档挂这里) */
   "beat:end": { result: "choice" | "beatEnd" | "sceneEnd"; turnNo: number };
-  "save:written": { slot: string };
   /** 非致命告警:未知表情回退、缺图占位、TTS 降级等 */
   "engine:warning": { message: string };
 }

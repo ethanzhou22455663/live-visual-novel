@@ -41,7 +41,7 @@ const ACT: ActPlan = {
 
 function fakeStage(): StagePort {
   // bg 与 ACT 对齐:resume 后 applyScene 判定 bg 相同 → 不再 commit(ledger 断言不偏移)
-  const snapshot = { bg: "classroom", bgm: null, sprites: {} };
+  const snapshot = { bg: "classroom", sprites: {} };
   return {
     bg: () => {},
     sprite: (_o: SpriteOp) => {},
@@ -63,10 +63,6 @@ class MemoryStorage implements StoragePort {
   }
   removeRaw(scope: "saves" | "global", key: string): void {
     this.#m.delete(`${scope}.${key}`);
-  }
-  listKeys(scope: "saves" | "global"): string[] {
-    const p = `${scope}.`;
-    return [...this.#m.keys()].filter((k) => k.startsWith(p)).map((k) => k.slice(p.length));
   }
 }
 
