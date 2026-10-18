@@ -45,6 +45,6 @@ export function matchWorldbook(
 }
 
 export function renderWorldbookBlock(hits: readonly WorldbookHit[]): string {
-  if (hits.length === 0) return "【世界書命中】(なし)";
-  return `【世界書命中】\n${hits.map((h) => h.entry.content).join("\n\n")}`;
+  if (hits.length === 0) return "[WORLDBOOK] (none)";
+  return `[WORLDBOOK]\n${hits.map((h) => h.entry.content).join("\n\n")}`;
 }

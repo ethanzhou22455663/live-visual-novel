@@ -113,7 +113,7 @@ describe("BeatRunner 幕循环", () => {
         ],
         (req) => {
           // 续写段:指示带玩家选择,ledgerTail 含已提交的 choice 行
-          expect(req.continuation?.reason).toContain("玩家选择了「声をかける」");
+          expect(req.continuation?.reason).toContain('The player chose "声をかける"');
           expect(req.ledgerTail).toContain('"t":"choice"');
           return [commit({ t: "say", who: "enagi", emotion: "笑", text: "えへへ。" }), done("sceneEnd", 1)];
         },
@@ -163,7 +163,7 @@ describe("BeatRunner 幕循环", () => {
       [
         [commit({ t: "narrate", text: "一行目" }), { kind: "aborted", reason: "生成停滞", canContinue: true }],
         (req) => {
-          expect(req.continuation).toEqual({ reason: "前次生成中断,继续本幕", count: 1 });
+          expect(req.continuation).toEqual({ reason: "generation interrupted, continue the act", count: 1 });
           expect(req.ledgerTail).toContain("一行目");
           return [commit({ t: "narrate", text: "二行目" }), done("sceneEnd", 2)];
         },

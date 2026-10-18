@@ -50,13 +50,13 @@ export class Summarizer {
     signal?: AbortSignal;
   }): Promise<Summary> {
     const user = [
-      `【旧摘要】${JSON.stringify({
+      `[PREVIOUS SUMMARY] ${JSON.stringify({
         facts: req.old.facts,
         charUpdates: req.old.charUpdates,
         threads: req.old.threads,
       })}`,
-      `【新增事件】${renderHistory(req.items, 40, 4000, req.names ?? {}) || "(なし)"}`,
-      `【任务】合并为新的摘要 JSON。结构严格如下(threads 是对象数组,不是字符串):{"facts":"≤400字の総述","charUpdates":{"<charId>":"変化の記録テキスト"},"threads":[{"id":"t1","title":"未決の伏線","status":"open"}]}。只输出 JSON。`,
+      `[NEW EVENTS] ${renderHistory(req.items, 40, 4000, req.names ?? {}) || "(none)"}`,
+      `[TASK] Merge into a new summary JSON. The structure is strict (threads is an array of objects, NOT strings): {"facts":"overview, 400 chars max","charUpdates":{"<charId>":"change note text"},"threads":[{"id":"t1","title":"open thread","status":"open"}]}. Output only JSON.`,
     ].join("\n\n");
 
     const raw = await withRetries(
@@ -66,7 +66,7 @@ export class Summarizer {
           baseUrl: this.#opts.baseUrl,
           model: this.#opts.model,
           messages: [
-            { role: "system", content: "你是视觉小说的剧情摘要器。输入是旧摘要与新增事件,输出合并后的摘要 JSON 对象。" },
+            { role: "system", content: "You are the story summarizer for a visual novel. Input: the previous summary and new events. Output the merged summary as one JSON object." },
             { role: "user", content: user },
           ],
           temperature: 0.3,

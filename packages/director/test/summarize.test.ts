@@ -38,8 +38,8 @@ describe("Summarizer.summarize", () => {
     expect(o.responseFormat).toEqual({ type: "json_object" });
     expect(o.temperature).toBe(0.3);
     expect(o.timeoutMs).toBe(30_000);
-    expect(o.messages.at(-1)!.content).toContain("【新增事件】");
-    expect(o.messages.at(-1)!.content).toContain("【陽見恵凪】(笑)「きみ、今の聞いた?」"); // 历史渲染带表示名
+    expect(o.messages.at(-1)!.content).toContain("[NEW EVENTS]");
+    expect(o.messages.at(-1)!.content).toContain("陽見恵凪 (笑): \"きみ、今の聞いた?\""); // 历史渲染带表示名
   });
 
   it("facts 截到 maxFactsChars;threads ≤12;旧摘要点在 user 里", async () => {

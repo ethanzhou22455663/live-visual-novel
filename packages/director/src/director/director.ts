@@ -12,21 +12,21 @@ import { buildDirectorMessages, renderPackTables } from "./context.ts";
 import { Summarizer } from "./summarize.ts";
 import { WriterService } from "./writer.ts";
 
-/** 幕设计结构校验(超出 zod 表达力的剧情规则) */
+/** 幕设计结构校验(超出 zod 表达力的剧情规则);消息进 LLM 重试上下文 → 英语 */
 export function validateActPlan(act: ActPlan, pack: ContentPack): string[] {
   const errors: string[] = [];
-  if (!pack.scenes[act.scene.bg]) errors.push(`scene.bg "${act.scene.bg}" 不在场景清单`);
+  if (!pack.scenes[act.scene.bg]) errors.push(`scene.bg "${act.scene.bg}" is not in the scene list`);
   if (act.scene.bgm !== null && !pack.bgm[act.scene.bgm]) {
-    errors.push(`scene.bgm "${act.scene.bgm}" 不在 BGM 清单`);
+    errors.push(`scene.bgm "${act.scene.bgm}" is not in the BGM list`);
   }
   for (const id of act.scene.cast) {
-    if (!pack.characters[id]) errors.push(`cast "${id}" 不在角色清单`);
+    if (!pack.characters[id]) errors.push(`cast "${id}" is not in the character list`);
   }
-  if (act.scene.cast.length === 0) errors.push("cast 为空");
+  if (act.scene.cast.length === 0) errors.push("cast is empty");
   const last = act.beats[act.beats.length - 1];
-  if (!last || last.endsWith !== "sceneEnd") errors.push("最后一段 endsWith 必须= sceneEnd(= 幕终)");
+  if (!last || last.endsWith !== "sceneEnd") errors.push('the last beat\'s endsWith must be "sceneEnd" (= end of act)');
   const choices = act.beats.filter((b) => b.endsWith === "choice").length;
-  if (choices > 1) errors.push(`choice 段全幕至多 1 个(现在 ${choices})`);
+  if (choices > 1) errors.push(`at most 1 choice beat per act (found ${choices})`);
   return errors;
 }
 
@@ -97,18 +97,18 @@ export class DirectorService {
       try {
         obj = JSON.parse(raw);
       } catch {
-        return { ok: false, errors: ["输出不是合法 JSON"] };
+        return { ok: false, errors: ["output is not valid JSON"] };
       }
       const o = (obj ?? {}) as Record<string, unknown>;
-      if (!("direction" in o) || !("act" in o)) return { ok: false, errors: ["缺少 direction 或 act 键"] };
+      if (!("direction" in o) || !("act" in o)) return { ok: false, errors: ["missing \"direction\" or \"act\" key"] };
       if (o.direction !== null && typeof o.direction !== "string") {
-        return { ok: false, errors: ["direction 必须是字符串或 null"] };
+        return { ok: false, errors: ["direction must be a string or null"] };
       }
       if (typeof o.direction === "string" && o.direction.trim().length === 0) {
-        return { ok: false, errors: ["direction 不得为空字符串(无新走向请输出 null)"] };
+        return { ok: false, errors: ["direction must not be an empty string (output null if no new direction)"] };
       }
       if (req.mustRefreshDirection && o.direction === null) {
-        return { ok: false, errors: ["【需新走向】标记在场,direction 禁止 null"] };
+        return { ok: false, errors: ["[NEED NEW DIRECTION] marker is present — direction must not be null"] };
       }
       const parsed = ActPlanSchema.safeParse(o.act);
       if (!parsed.success) {

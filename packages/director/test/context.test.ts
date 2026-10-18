@@ -11,8 +11,8 @@ describe("renderPackTables", () => {
     const t = renderPackTables(makePack());
     expect(t).toContain("- enagi / 陽見恵凪 / 主题色 #ff8fb4 / 可用表情: 平常|笑");
     expect(t).toContain("yukitaka");
-    expect(t).toContain("(立繪なし)");
-    expect(t).toContain("【可用场景】教室");
+    expect(t).toContain("(no sprite)");
+    expect(t).toContain("[AVAILABLE SCENES] 教室");
     expect(t).toContain("p07");
   });
 });
@@ -42,10 +42,10 @@ describe("buildWriterMessages 块序(§0.2 冻结)", () => {
       history: [{ t: "narrate", text: "レモネードの話をした。" }],
       names: { enagi: "陽見恵凪" },
       ledgerTail: '{"t":"narrate","text":"確定行"}',
-      continuationReason: "前次生成中断",
+      continuationReason: "generation interrupted",
     });
-    expect(sys!.content).toContain("全年齢対象");
-    const order = ["【世界書命中】", "【滚动摘要】", "【世界状态】", "【本幕设计】", "【近期历史】", "【续写指示】"].map(
+    expect(sys!.content).toContain("All-ages content only");
+    const order = ["[WORLDBOOK]", "[ROLLING SUMMARY]", "[WORLD STATE]", "[ACT DESIGN]", "[RECENT HISTORY]", "[CONTINUATION]"].map(
       (m) => user!.content.indexOf(m),
     );
     expect(order.every((i) => i >= 0)).toBe(true);
@@ -68,19 +68,19 @@ describe("buildDirectorMessages", () => {
       direction: "次は日常パート:練習と絆を深める",
       stage: { bg: "教室", bgm: "p07", cast: ["enagi"] },
       mustRefreshDirection: true,
-      validationErrors: ['scene.bg "屋上" 不在场景清单'],
+      validationErrors: ['scene.bg "屋上" is not in the scene list'],
     });
     expect(sys!.content).toContain("▶ 放課後の教室");
-    expect(user!.content).toContain("【全局走向】次は日常パート:練習と絆を深める");
-    expect(user!.content).toContain("【需新走向】");
-    expect(user!.content).toContain("【当前舞台】bg=教室 ／ bgm=p07 ／ 在場=enagi");
-    expect(user!.content).toContain("【滚动摘要】");
-    expect(user!.content).toContain("【世界状态】");
-    expect(user!.content).toContain("【近期历史】");
-    expect(user!.content).toContain("【玩家刚选择】▶ 声をかけた");
-    expect(user!.content).toContain("【前次输出错误】");
-    expect(user!.content).toContain("不在场景清单");
-    const order = ["【全局走向】", "【需新走向】", "【当前舞台】", "【滚动摘要】", "【世界状态】", "【近期历史】", "【玩家刚选择】", "【前次输出错误】"].map(
+    expect(user!.content).toContain("[GLOBAL DIRECTION] 次は日常パート:練習と絆を深める");
+    expect(user!.content).toContain("[NEED NEW DIRECTION]");
+    expect(user!.content).toContain("[CURRENT STAGE] bg=教室 / bgm=p07 / on-stage=enagi");
+    expect(user!.content).toContain("[ROLLING SUMMARY]");
+    expect(user!.content).toContain("[WORLD STATE]");
+    expect(user!.content).toContain("[RECENT HISTORY]");
+    expect(user!.content).toContain("[PLAYER JUST CHOSE] > 声をかけた");
+    expect(user!.content).toContain("[PREVIOUS OUTPUT ERRORS]");
+    expect(user!.content).toContain("is not in the scene list");
+    const order = ["[GLOBAL DIRECTION]", "[NEED NEW DIRECTION]", "[CURRENT STAGE]", "[ROLLING SUMMARY]", "[WORLD STATE]", "[RECENT HISTORY]", "[PLAYER JUST CHOSE]", "[PREVIOUS OUTPUT ERRORS]"].map(
       (m) => user!.content.indexOf(m),
     );
     expect(order.every((i) => i >= 0)).toBe(true);
@@ -97,10 +97,10 @@ describe("buildDirectorMessages", () => {
       history: [],
       names: {},
     });
-    expect(user!.content).not.toContain("【玩家刚选择】");
-    expect(user!.content).not.toContain("【前次输出错误】");
-    expect(user!.content).not.toContain("【需新走向】");
-    expect(user!.content).toContain("【全局走向】(まだ方針なし)");
-    expect(user!.content).toContain("【当前舞台】(情報なし)");
+    expect(user!.content).not.toContain("[PLAYER JUST CHOSE]");
+    expect(user!.content).not.toContain("[PREVIOUS OUTPUT ERRORS]");
+    expect(user!.content).not.toContain("[NEED NEW DIRECTION]");
+    expect(user!.content).toContain("[GLOBAL DIRECTION] (none yet)");
+    expect(user!.content).toContain("[CURRENT STAGE] (no info)");
   });
 });

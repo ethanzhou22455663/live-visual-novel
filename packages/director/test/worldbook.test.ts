@@ -47,11 +47,11 @@ describe("matchWorldbook", () => {
 });
 
 describe("renderWorldbookBlock", () => {
-  it("无命中 → (なし);有命中 → 内容连缀", () => {
-    expect(renderWorldbookBlock([])).toContain("(なし)");
+  it("无命中 → (none);有命中 → 内容连缀", () => {
+    expect(renderWorldbookBlock([])).toContain("(none)");
     const hits = matchWorldbook([entry({ id: "a", keys: ["歌"], content: "A の設定。" })], ["歌"]);
     const block = renderWorldbookBlock(hits);
-    expect(block).toContain("【世界書命中】");
+    expect(block).toContain("[WORLDBOOK]");
     expect(block).toContain("A の設定。");
   });
 });

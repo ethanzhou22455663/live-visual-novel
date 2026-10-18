@@ -15,7 +15,7 @@ export function renderPackTables(pack: ContentPack): string {
   const chars = Object.values(pack.characters)
     .map((c) => {
       const emotions = Object.keys(c.sprites);
-      const emo = emotions.length ? emotions.join("|") : "(立繪なし)";
+      const emo = emotions.length ? emotions.join("|") : "(no sprite)";
       return `- ${c.id} / ${c.displayName} / 主题色 ${c.color} / 可用表情: ${emo}`;
     })
     .join("\n");
@@ -23,7 +23,7 @@ export function renderPackTables(pack: ContentPack): string {
   const bgm = Object.values(pack.bgm)
     .map((b) => `${b.id}${b.title ? ` ${b.title}` : ""}`)
     .join(" | ");
-  return `【可用角色】\n${chars}\n【可用场景】${scenes}\n【可用BGM】${bgm || "(なし)"}`;
+  return `[AVAILABLE CHARACTERS]\n${chars}\n[AVAILABLE SCENES] ${scenes}\n[AVAILABLE BGM] ${bgm || "(none)"}`;
 }
 
 function renderWorld(world: WorldState): string {
@@ -86,24 +86,26 @@ export interface DirectorContextInput {
 }
 
 function renderStage(stage: StageState | undefined): string {
-  if (!stage) return "(情報なし)";
-  const on = stage.cast.length ? stage.cast.join(",") : "なし";
-  return `bg=${stage.bg ?? "なし"} ／ bgm=${stage.bgm ?? "なし"} ／ 在場=${on}`;
+  if (!stage) return "(no info)";
+  const on = stage.cast.length ? stage.cast.join(",") : "none";
+  return `bg=${stage.bg ?? "none"} / bgm=${stage.bgm ?? "none"} / on-stage=${on}`;
 }
 
 export function buildDirectorMessages(input: DirectorContextInput): ChatMessage[] {
   const user = [
-    `【全局走向】${input.direction || "(まだ方針なし)"}`,
-    input.mustRefreshDirection ? "【需新走向】本次必须输出新的 direction(null 禁止)。玩家刚做出选择时,走向必须反映它。" : null,
-    `【当前舞台】${renderStage(input.stage)}`,
-    `【滚动摘要】${renderSummary(input.summary)}`,
-    `【世界状态】${renderWorld(input.world)}`,
-    `【近期历史】${renderHistory(input.history, 10, 2000, input.names) || "(なし)"}`,
-    input.lastChoice ? `【玩家刚选择】▶ ${input.lastChoice.label}` : null,
-    input.validationErrors?.length
-      ? `【前次输出错误】\n${input.validationErrors.join("\n")}\n上記を修正して再度 JSON のみ出力せよ。`
+    `[GLOBAL DIRECTION] ${input.direction || "(none yet)"}`,
+    input.mustRefreshDirection
+      ? "[NEED NEW DIRECTION] You MUST output a new direction this time (null is forbidden). If the player just made a choice, the direction must reflect it."
       : null,
-    `【任务】设计下一幕(direction+act JSON)。场景切换只发生在幕首。`,
+    `[CURRENT STAGE] ${renderStage(input.stage)}`,
+    `[ROLLING SUMMARY] ${renderSummary(input.summary)}`,
+    `[WORLD STATE] ${renderWorld(input.world)}`,
+    `[RECENT HISTORY] ${renderHistory(input.history, 10, 2000, input.names) || "(none)"}`,
+    input.lastChoice ? `[PLAYER JUST CHOSE] > ${input.lastChoice.label}` : null,
+    input.validationErrors?.length
+      ? `[PREVIOUS OUTPUT ERRORS]\n${input.validationErrors.join("\n")}\nFix all of the above and output ONLY the JSON again.`
+      : null,
+    `[TASK] Design the next act (direction+act JSON). Scene changes happen only at act boundaries.`,
   ]
     .filter((x): x is string => x !== null)
     .join("\n\n");
@@ -134,10 +136,10 @@ export function buildWriterMessages(input: WriterContextInput): ChatMessage[] {
   const wbBlock = renderWorldbookBlock(matchWorldbook(input.worldbookEntries, scanTexts));
   const parts = [
     wbBlock,
-    `【滚动摘要】${renderSummary(input.summary)}`,
-    `【世界状态】${renderWorld(input.world)}`,
-    `【本幕设计】${JSON.stringify(input.act)}`,
-    `【近期历史】${renderHistory(input.history, 12, 2000, input.names) || "(なし)"}`,
+    `[ROLLING SUMMARY] ${renderSummary(input.summary)}`,
+    `[WORLD STATE] ${renderWorld(input.world)}`,
+    `[ACT DESIGN] ${JSON.stringify(input.act)}`,
+    `[RECENT HISTORY] ${renderHistory(input.history, 12, 2000, input.names) || "(none)"}`,
   ];
   if (input.continuationReason !== undefined) {
     parts.push(continuationBlock(input.continuationReason, input.ledgerTail ?? "(なし)"));

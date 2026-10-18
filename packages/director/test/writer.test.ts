@@ -69,9 +69,9 @@ describe("WriterService.generateBeat", () => {
     const [sys, user] = llm.streamCalls[0]!.messages;
     expect(sys!.role).toBe("system");
     expect(sys!.content).toContain("NDJSON");
-    expect(sys!.content).toContain("【可用角色】");
+    expect(sys!.content).toContain("[AVAILABLE CHARACTERS]");
     expect(user!.role).toBe("user");
-    const order = ["【世界書命中】", "【滚动摘要】", "【世界状态】", "【本幕设计】", "【近期历史】"].map((m) =>
+    const order = ["[WORLDBOOK]", "[ROLLING SUMMARY]", "[WORLD STATE]", "[ACT DESIGN]", "[RECENT HISTORY]"].map((m) =>
       user!.content.indexOf(m),
     );
     expect(order.every((i) => i >= 0)).toBe(true);
@@ -94,7 +94,7 @@ describe("WriterService.generateBeat", () => {
     expect(chunks.find((c) => c.kind === "done")).toEqual({ kind: "done", result: "choice", lineCount: 1 });
     expect(llm.streamCalls.length).toBe(1); // 硬切:writer 内部不续写(BeatRunner 层等玩家)
     const user = llm.streamCalls[0]!.messages.at(-1)!.content;
-    expect(user).toContain("【本幕设计】");
+    expect(user).toContain("[ACT DESIGN]");
   });
 
   it("连续 3 坏行 → aborted(canContinue=true),无 done", async () => {
@@ -148,7 +148,7 @@ describe("WriterService.generateBeat", () => {
     const done = chunks.find((c) => c.kind === "done");
     expect(done).toEqual({ kind: "done", result: "sceneEnd", lineCount: 16 });
     const retryUser = llm.streamCalls[1]!.messages.at(-1)!.content;
-    expect(retryUser).toContain("【续写指示】");
+    expect(retryUser).toContain("[CONTINUATION]");
     expect(retryUser).toContain("overrun");
     expect(retryUser).toContain("せりふ0"); // 已确定行(ledgerTail)让模型看到
   });
@@ -177,13 +177,13 @@ describe("WriterService.generateBeat", () => {
       makeWriter(llm).generateBeat(
         makeReq({
           ledgerTail: '{"t":"narrate","text":"前の確定行。"}',
-          continuation: { reason: "前次生成中断,继续本幕", count: 1 },
+          continuation: { reason: "generation interrupted, continue the act", count: 1 },
         }),
       ),
     );
     const user = llm.streamCalls[0]!.messages.at(-1)!.content;
-    expect(user).toContain("【续写指示】");
-    expect(user).toContain("前次生成中断,继续本幕");
+    expect(user).toContain("[CONTINUATION]");
+    expect(user).toContain("generation interrupted, continue the act");
     expect(user).toContain("前の確定行。"); // 引擎侧已提交行必须可见
   });
 });

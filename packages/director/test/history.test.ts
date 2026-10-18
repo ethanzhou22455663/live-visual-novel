@@ -6,7 +6,7 @@ import type { HistoryItem } from "@gal/shared";
 import { renderHistory } from "../src/director/history.ts";
 
 describe("renderHistory", () => {
-  it("say=【表示名】(表情)「…」/ narrate=（…）/ choice=▶ label", () => {
+  it("say=Name (emotion) \"…\" / narrate=(…) / choice=> label(提示词语言方针:结构英语)", () => {
     const items: HistoryItem[] = [
       { t: "narrate", text: "放課後。" },
       { t: "say", who: "enagi", emotion: "笑", text: "きみ、今の聞いた?" },
@@ -15,23 +15,23 @@ describe("renderHistory", () => {
     ];
     const out = renderHistory(items, 12, 2000, { enagi: "陽見恵凪" });
     const lines = out.split("\n");
-    expect(lines[0]).toBe("（放課後。）");
-    expect(lines[1]).toBe("【陽見恵凪】(笑)「きみ、今の聞いた?」");
-    expect(lines[2]).toBe("【陽見恵凪】「ふふ。」");
-    expect(lines[3]).toBe("▶ 声をかける");
+    expect(lines[0]).toBe("(放課後。)");
+    expect(lines[1]).toBe("陽見恵凪 (笑): \"きみ、今の聞いた?\"");
+    expect(lines[2]).toBe("陽見恵凪: \"ふふ。\"");
+    expect(lines[3]).toBe("> 声をかける");
   });
 
   it("未知角色回退 id 本身", () => {
     const out = renderHistory([{ t: "say", who: "miku", text: "あ。" }], 12, 2000, {});
-    expect(out).toBe("【miku】「あ。」");
+    expect(out).toBe('miku: "あ。"');
   });
 
   it("maxLines 超出丢最旧", () => {
     const items: HistoryItem[] = Array.from({ length: 15 }, (_, i) => ({ t: "narrate", text: `n${i}` }));
     const lines = renderHistory(items, 12).split("\n");
     expect(lines.length).toBe(12);
-    expect(lines[0]).toBe("（n3）");
-    expect(lines.at(-1)).toBe("（n14）");
+    expect(lines[0]).toBe("(n3)");
+    expect(lines.at(-1)).toBe("(n14)");
   });
 
   it("token 预算(chars/2)从最新往回收,溢出丢最旧", () => {
@@ -40,6 +40,6 @@ describe("renderHistory", () => {
       { t: "narrate", text: "い".repeat(4) }, // cost 2
     ];
     const out = renderHistory(items, 12, 10);
-    expect(out).toBe(`（${"い".repeat(4)}）`); // 最古の 100 字行は予算超過で落ちる
+    expect(out).toBe(`(${"い".repeat(4)})`); // 最古の 100 字行は予算超過で落ちる
   });
 });

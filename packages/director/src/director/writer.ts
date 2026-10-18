@@ -184,7 +184,9 @@ export class WriterService {
         const missingChoice = wantsChoice && !sawChoice;
         if ((overran || missingChoice) && internalContinuation < 1) {
           internalContinuation++;
-          reason = overran ? "overrun:超出行数预算,尽快收束本幕" : "missing-choice:本幕设计中含 choice 小节,应在选项处收束";
+          reason = overran
+            ? "overrun: you exceeded the line budget, wrap up the act as soon as possible"
+            : "missing-choice: this act design includes a choice beat — close the segment with a choice line";
           this.#deps.onError?.(`编剧续写纠正(${reason})`);
           continue;
         }

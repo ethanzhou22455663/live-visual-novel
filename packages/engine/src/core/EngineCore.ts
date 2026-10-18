@@ -704,13 +704,27 @@ export class EngineCore {
 
   #sanitizeEmotion(who: SpeakerId, emotion: EmotionTag): EmotionTag {
     if (!this.content.characterIds.has(who)) {
-      this.warn(`未知角色「${who}」的台词照常上屏(立绘/语音跳过)`);
+      this.#warnOnce(`unknown-char:${who}`, `未知角色「${who}」的台词照常上屏(立绘/语音跳过;此后不再提示)`);
       return "";
     }
-    if (emotion && this.content.emotionsOf(who).has(emotion)) return emotion;
+    // 无立绘角色(主人公类,emotionsOf 空):表情无视觉意义,原样保留不校验不告警
+    // (2026-10-18 裁决:男主无立绘,他的"表情回退"提示全是噪音)
+    const emotions = this.content.emotionsOf(who);
+    if (emotions.size === 0) return emotion;
+    if (emotion && emotions.has(emotion)) return emotion;
     const fallback = this.content.defaultExprOf(who);
-    if (emotion) this.warn(`未知表情「${emotion}」@${who} → 回退「${fallback || "(无立绘)"}」`);
+    if (emotion) {
+      this.#warnOnce(`bad-emotion:${who}`, `未知表情「${emotion}」@${who} → 回退「${fallback || "(无)"}」(此后不再提示)`);
+    }
     return fallback;
+  }
+
+  /** 同类告警每 key 只打一次(97bdf30 同款去刷屏;表情/未知角色逐行触发会淹掉控制台) */
+  #warned = new Set<string>();
+  #warnOnce(key: string, msg: string): void {
+    if (this.#warned.has(key)) return;
+    this.#warned.add(key);
+    this.warn(msg);
   }
 
   #sanitizeChoice(ev: Extract<ScriptEvent, { t: "choice" }>): Extract<ScriptEvent, { t: "choice" }> {

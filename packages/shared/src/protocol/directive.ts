@@ -42,11 +42,12 @@ export const BeatDirectiveSchema = z.object({
 
 export type BeatDirective = z.infer<typeof BeatDirectiveSchema>;
 
-/** 总导演彻底失败时的兜底(§1):同场景、泛化目标、1 段 sceneEnd 收束;bg/cast 由调用方决定 */
+/** 总导演彻底失败时的兜底(§1):同场景、泛化目标、1 段 sceneEnd 收束;bg/cast 由调用方决定。
+ *  goal 文案进编剧上下文(给 LLM)→ 英语(提示词语言方针 2026-10-18) */
 export function fallbackActPlan(bg: string, cast: readonly string[]): ActPlan {
   return {
     scene: { bg, bgm: null, cast: cast.slice(0, 3) },
-    actGoal: "物語を自然に進める。落ち着いた日常のワンシーンを描く。",
-    beats: [{ goal: "この一幕を穏やかに締めくくる。", endsWith: "sceneEnd", maxLines: 8 }],
+    actGoal: "Let the story proceed naturally; depict a calm everyday moment.",
+    beats: [{ goal: "Close this act gently.", endsWith: "sceneEnd", maxLines: 8 }],
   };
 }

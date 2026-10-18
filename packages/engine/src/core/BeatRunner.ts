@@ -277,7 +277,7 @@ export class BeatRunner {
       // 中断恢复(禁原样重试:ledgerTail 让模型看到已确定行)
       if (!done && disruptions < 2) {
         disruptions++;
-        continuation = { reason: "前次生成中断,继续本幕", count: disruptions };
+        continuation = { reason: "generation interrupted, continue the act", count: disruptions };
         bus.emit("generation:status", { phase: "writing", turnNo });
         continue;
       }
@@ -291,7 +291,7 @@ export class BeatRunner {
         if (abort.signal.aborted) return "beatEnd";
         const label = this.#lastChoiceLabel() ?? "?";
         continuation = {
-          reason: `玩家选择了「${label}」。从选择之后继续,写完本幕剩余小节直到 sceneEnd 收束`,
+          reason: `The player chose "${label}". Continue after the choice and finish the remaining beats of this act up to the sceneEnd closing`,
           count: disruptions + choiceContinues,
         };
         bus.emit("generation:status", { phase: "writing", turnNo });

@@ -48,8 +48,8 @@ describe("DirectorService.planAct", () => {
     expect(llm.onceCalls.length).toBe(2);
     expect(act.beats[0]!.maxLines).toBe(6); // clamp 下限
     const retryUser = llm.onceCalls[1]!.messages.at(-1)!.content;
-    expect(retryUser).toContain("【前次输出错误】");
-    expect(retryUser).toContain('scene.bg "屋上" 不在场景清单');
+    expect(retryUser).toContain("[PREVIOUS OUTPUT ERRORS]");
+    expect(retryUser).toContain('scene.bg "屋上" is not in the scene list');
   });
 
   it("结构校验:最后段非 sceneEnd / choice 段 >1 / 【需新走向】时 direction=null → 全部附错重试", async () => {
@@ -77,7 +77,7 @@ describe("DirectorService.planAct", () => {
     const svc = service(llm);
     await svc.planAct(REQ);
     const user1 = llm.onceCalls[1]!.messages.at(-1)!.content;
-    expect(user1).toContain("最后一段 endsWith 必须= sceneEnd");
+    expect(user1).toContain('endsWith must be "sceneEnd"');
 
     let call2 = 0;
     const llm2 = fakeLlm({
@@ -89,8 +89,8 @@ describe("DirectorService.planAct", () => {
     const { direction } = await service(llm2).planAct({ ...REQ, mustRefreshDirection: true });
     expect(llm2.onceCalls.length).toBe(2);
     const user2 = llm2.onceCalls[1]!.messages.at(-1)!.content;
-    expect(user2).toContain("【需新走向】");
-    expect(user2).toContain("direction 禁止 null");
+    expect(user2).toContain("[NEED NEW DIRECTION]");
+    expect(user2).toContain("direction must not be null");
     expect(direction).toBe("新しい走向");
   });
 
@@ -134,7 +134,7 @@ describe("DirectorService.planAct", () => {
     const { direction, act } = await svc.planAct(REQ);
     expect(calls).toBe(2); // 坏 JSON 可 parse-fail 路径:重试一次后放弃(不触发 429 退避)
     expect(direction).toBeNull();
-    expect(act.actGoal).toBe("物語を自然に進める。落ち着いた日常のワンシーンを描く。");
+    expect(act.actGoal).toBe("Let the story proceed naturally; depict a calm everyday moment.");
     expect(act.beats[0]!.endsWith).toBe("sceneEnd");
   });
 
