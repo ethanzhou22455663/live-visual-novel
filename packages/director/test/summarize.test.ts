@@ -63,13 +63,28 @@ describe("Summarizer.summarize", () => {
     expect(user).toContain("旧伏線");
   });
 
-  it("非 JSON / schema 不合 → 抛出(调用方沿用旧摘要)", async () => {
+  it("非 JSON → 抛出;畸形输出(threads 字符串化/charUpdates 值对象化)→ 归一化后成功", async () => {
     const llm = fakeLlm({ chatOnce: async () => "申し訳ありません、JSON ではありません" });
     await expect(
       summarizer(llm).summarize({ old: EMPTY_SUMMARY, items: ITEMS, throughLineId: "1.0" }),
     ).rejects.toBeInstanceOf(LlmHttpError);
 
-    const bad = fakeLlm({ chatOnce: async () => JSON.stringify({ facts: 123 }) });
+    // 2026-10-18 手验:DeepSeek 实际输出过的两种畸形 → 宽松归一化兜住(摘要不再永败)
+    const malformed = fakeLlm({
+      chatOnce: async () =>
+        JSON.stringify({
+          facts: "まとめ",
+          charUpdates: { enagi: { change: "心を開いた" } },
+          threads: ["歌の正体", { id: "t2", title: "屋上の鍵", status: "open" }],
+        }),
+    });
+    const s = await summarizer(malformed).summarize({ old: EMPTY_SUMMARY, items: ITEMS, throughLineId: "1.0" });
+    expect(s.charUpdates.enagi).toBe(JSON.stringify({ change: "心を開いた" }));
+    expect(s.threads[0]).toEqual({ id: "t1", title: "歌の正体", status: "open" });
+    expect(s.threads[1]).toEqual({ id: "t2", title: "屋上の鍵", status: "open" });
+
+    // 不可归一(threads 元素是数字)→ 仍 schema 不合抛出
+    const bad = fakeLlm({ chatOnce: async () => JSON.stringify({ facts: "x", threads: [123] }) });
     await expect(
       summarizer(bad).summarize({ old: EMPTY_SUMMARY, items: ITEMS, throughLineId: "1.0" }),
     ).rejects.toThrow(/schema 不合/);

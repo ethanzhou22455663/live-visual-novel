@@ -1,16 +1,16 @@
 /**
- * SaveSystem(M5)合同测试:
+ * SaveSystem(M5,2026-10-18 幕制)合同测试:
  * - MemoryStorage 往返:ledger/world/cursor 一致;continueFrom 后状态回滚到存档点
- * - writing 中点:挂起到下一个 line:commit 快照,pendingContinuation=true 且 currentBeat 在
+ * - 幕写作中点:挂起到下一个显示边界落盘,pendingContinuation=true 且 currentAct 在;走向/幕数入档
  * - quota → SaveResult{reason:"quota"} + engine:warning
  * - auto 触发:beat:end(beatEnd/sceneEnd)与 choice:resolved 写 auto;choice 收束的 beat:end 不写
  * - 摘要裁剪:summarizedThroughLineId 之后的行才入档;裁剪清空 ledger 时读档后 beginTurn 仍前进
- * - 读档续写:pendingContinuation ⇒ 下一轮 run() 跳过导演,同拍续号(1.0 → 1.1),ledgerTail 可见
+ * - 读档续写:pendingContinuation ⇒ 下一轮 run() 跳过总导演,同幕续号(1.0 → 1.1),ledgerTail 可见
  */
 import { describe, expect, it, vi } from "vitest";
 import { EMPTY_SUMMARY, StorageQuotaError } from "@gal/shared";
 import type {
-  BeatDirective,
+  ActPlan,
   ContentPort,
   GenerateBeatRequest,
   SaveData,
@@ -33,15 +33,15 @@ const content: ContentPort = {
   displayNameOf: (who) => (who === "enagi" ? "陽見恵凪" : who),
 };
 
-const DIRECTIVE: BeatDirective = {
+const ACT: ActPlan = {
   scene: { bg: "classroom", bgm: null, cast: ["enagi"] },
-  goal: "再会",
-  endsWith: "beatEnd",
-  maxLines: 6,
+  actGoal: "再会",
+  beats: [{ goal: "再会の幕", endsWith: "sceneEnd", maxLines: 6 }],
 };
 
 function fakeStage(): StagePort {
-  const snapshot = { bg: null, bgm: null, sprites: {} };
+  // bg 与 ACT 对齐:resume 后 applyScene 判定 bg 相同 → 不再 commit(ledger 断言不偏移)
+  const snapshot = { bg: "classroom", bgm: null, sprites: {} };
   return {
     bg: () => {},
     sprite: (_o: SpriteOp) => {},
@@ -92,18 +92,22 @@ function makeEnv(storage: StoragePort = new MemoryStorage(), getRunner?: () => B
   return { bus, clock, engine, saves, storage };
 }
 
-/** 中点/裁剪用的假 runner:只暴露 SaveSystem 读取的四个成员 */
+/** 中点/裁剪用的假 runner:只暴露 SaveSystem 读取的成员 */
 function fakeRunnerState(opts: {
   running: boolean;
-  currentBeat: { turnNo: number; directive: BeatDirective } | null;
+  currentAct: ActPlan | null;
   summarizedThroughLineId?: string;
   outlineBeatIndex?: number | null;
+  storyDirection?: string;
+  actsDone?: number;
 }): BeatRunner {
   return {
     running: opts.running,
-    currentBeat: opts.currentBeat,
+    currentAct: opts.currentAct,
     summary: { ...EMPTY_SUMMARY, summarizedThroughLineId: opts.summarizedThroughLineId ?? "" },
     outlineBeatIndex: opts.outlineBeatIndex ?? null,
+    storyDirection: opts.storyDirection ?? "",
+    actsDone: opts.actsDone ?? 0,
   } as unknown as BeatRunner;
 }
 
@@ -116,13 +120,13 @@ function makeRunnerEnv(save: SaveData, chunks: (req: GenerateBeatRequest) => Sto
     content,
     textEl: document.createElement("p"),
   });
-  const nextCalls: unknown[] = [];
+  const planCalls: unknown[] = [];
   const genReqs: GenerateBeatRequest[] = [];
   const story = {
-    async nextBeat(): Promise<BeatDirective> {
-      nextCalls.push(1);
-      if (nextCalls.length >= 2) throw new Error("sentinel-stop"); // 无限循环的确定性出口
-      return DIRECTIVE;
+    async planAct(): Promise<{ direction: string | null; act: ActPlan }> {
+      planCalls.push(1);
+      if (planCalls.length >= 2) throw new Error("sentinel-stop"); // 无限循环的确定性出口
+      return { direction: null, act: ACT };
     },
     async *generateBeat(req: GenerateBeatRequest): AsyncGenerator<StoryChunk, void, unknown> {
       genReqs.push(req);
@@ -135,7 +139,7 @@ function makeRunnerEnv(save: SaveData, chunks: (req: GenerateBeatRequest) => Sto
   const runner = new BeatRunner({ engine, bus, story, content, outlineBeatCount: null });
   const saves = new SaveSystem({ engine, bus, storage: new MemoryStorage(), getRunner: () => runner });
   saves.continueFrom(save);
-  return { engine, runner, nextCalls, genReqs };
+  return { engine, runner, planCalls, genReqs };
 }
 
 describe("SaveSystem 往返", () => {
@@ -152,7 +156,7 @@ describe("SaveSystem 往返", () => {
     expect(data!.ledger.map((e) => e.lineId)).toEqual(["1.0", "1.1"]);
     expect(data!.cursor).toEqual({ turnNo: 1, seq: 2 });
     expect(data!.pendingContinuation).toBe(false);
-    expect(data!.currentBeat).toBeNull();
+    expect(data!.currentAct).toBeNull();
 
     engine.commitModel({ t: "narrate", text: "三行目" });
     expect(engine.ledger.length).toBe(3);
@@ -162,8 +166,14 @@ describe("SaveSystem 往返", () => {
     expect(engine.phase).toBe("play");
   });
 
-  it("writing 中点:save 受理为 deferred,下一个显示边界(display:drained)落盘且 pendingContinuation", async () => {
-    const fake = fakeRunnerState({ running: true, currentBeat: { turnNo: 1, directive: DIRECTIVE }, outlineBeatIndex: 0 });
+  it("幕写作中点:save 受理为 deferred,下一个显示边界(display:drained)落盘;currentAct/走向/幕数入档", async () => {
+    const fake = fakeRunnerState({
+      running: true,
+      currentAct: ACT,
+      outlineBeatIndex: 0,
+      storyDirection: "次は日常へ",
+      actsDone: 3,
+    });
     const { clock, engine, saves } = makeEnv(new MemoryStorage(), () => fake);
     clock.setMode("fast"); // 泵直通(120ms 短 dwell):commit 遥遥领先于显示
     engine.beginTurn();
@@ -177,7 +187,9 @@ describe("SaveSystem 往返", () => {
     const { data } = saves.load("manual-1");
     expect(data).not.toBeNull();
     expect(data!.pendingContinuation).toBe(true);
-    expect(data!.currentBeat).toEqual({ turnNo: 1, directive: DIRECTIVE });
+    expect(data!.currentAct).toEqual({ plan: ACT });
+    expect(data!.storyDirection).toBe("次は日常へ");
+    expect(data!.actsDone).toBe(3);
     expect(data!.meta.slot).toBe("manual-1");
   });
 
@@ -210,7 +222,7 @@ describe("摘要裁剪与读档后续号", () => {
     engine.beginTurn();
     for (const t of ["あ", "い", "う", "え"]) engine.commitModel({ t: "narrate", text: t });
 
-    const fake = fakeRunnerState({ running: false, currentBeat: null, summarizedThroughLineId: "1.1", outlineBeatIndex: 0 });
+    const fake = fakeRunnerState({ running: false, currentAct: null, summarizedThroughLineId: "1.1", outlineBeatIndex: 0 });
     const savesTrim = new SaveSystem({
       engine,
       bus: engine.bus,
@@ -233,7 +245,7 @@ describe("摘要裁剪与读档后续号", () => {
     engine.beginTurn();
     for (const t of ["あ", "い"]) engine.commitModel({ t: "narrate", text: t });
 
-    const fake = fakeRunnerState({ running: false, currentBeat: null, summarizedThroughLineId: "1.1", outlineBeatIndex: 0 });
+    const fake = fakeRunnerState({ running: false, currentAct: null, summarizedThroughLineId: "1.1", outlineBeatIndex: 0 });
     const storage = new MemoryStorage();
     const savesA = new SaveSystem({ engine, bus: engine.bus, storage, getRunner: () => fake });
     savesA.save("manual-0");
@@ -248,12 +260,14 @@ describe("摘要裁剪与读档后续号", () => {
 });
 
 describe("读档续写(pendingContinuation)", () => {
-  it("下一轮 run() 跳过导演:同拍续号,ledgerTail 带已提交行,outlineBeatIndex 恢复", async () => {
-    // 造一个 mid-beat 档:turn 1 已提交 1.0,再由行境界快照带上 1.1
+  it("下一轮 run() 跳过总导演:同幕续号,ledgerTail 带已提交行,outlineBeatIndex/走向恢复", async () => {
+    // 造一个 mid-act 档:turn 1 已提交 1.0,再由行境界快照带上 1.1
     const fake = fakeRunnerState({
       running: true,
-      currentBeat: { turnNo: 1, directive: DIRECTIVE },
+      currentAct: ACT,
       outlineBeatIndex: 2,
+      storyDirection: "走向X",
+      actsDone: 4,
     });
     const { clock, engine, saves } = makeEnv(new MemoryStorage(), () => fake);
     clock.setMode("fast"); // 泵直通(120ms 短 dwell):显示边界即 commit 边界
@@ -266,27 +280,29 @@ describe("读档续写(pendingContinuation)", () => {
     expect(save.pendingContinuation).toBe(true);
 
     // 读进新引擎+真 runner:resume 路径。断言全部事后做——run() 会吞掉生成器内抛出的 expect
-    const { engine: engine2, runner, nextCalls, genReqs } = makeRunnerEnv(save, (req) => {
+    const { engine: engine2, runner, planCalls, genReqs } = makeRunnerEnv(save, (req) => {
       if (genReqs.length === 1) {
         return [
           { kind: "commit", event: { t: "narrate", text: "さん行目" } },
-          { kind: "done", result: "beatEnd", lineCount: 3 },
+          { kind: "done", result: "sceneEnd", lineCount: 3 },
         ];
       }
       return [
-        { kind: "commit", event: { t: "narrate", text: "次の拍" } },
-        { kind: "done", result: "beatEnd", lineCount: 1 },
+        { kind: "commit", event: { t: "narrate", text: "次の幕" } },
+        { kind: "done", result: "sceneEnd", lineCount: 1 },
       ];
     });
     expect(runner.outlineBeatIndex).toBe(2); // restore 恢复
+    expect(runner.storyDirection).toBe("走向X");
+    expect(runner.actsDone).toBe(4);
     expect(engine2.turnNo).toBe(1); // resumeTurn 已就位
-    await runner.run();
+    await runner.run().catch(() => {}); // 幕3 的 planAct 哨兵异常(调用数已断言,吞掉)
 
-    // 迭代1(续写拍)没问导演;拍2 问了一次;拍3 的 nextBeat 即哨兵
-    expect(nextCalls.length).toBe(2);
+    // 迭代1(续写幕)没问总导演;幕2 问了一次;幕3 的 planAct 即哨兵
+    expect(planCalls.length).toBe(2);
     expect(genReqs.length).toBe(2);
     const resumed = genReqs[0]!;
-    expect(resumed.turnNo).toBe(1); // 同拍续写(若回退则会是 2)
+    expect(resumed.turnNo).toBe(1); // 同幕续写(若回退则会是 2)
     expect(resumed.continuation).toBeUndefined();
     expect(resumed.ledgerTail).toContain("一行目");
     expect(resumed.ledgerTail).toContain("行境界");

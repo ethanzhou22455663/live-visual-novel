@@ -1,13 +1,14 @@
 /**
- * BeatRunner 测试共享假件(beatRunner.test.ts 与 m6.test.ts 共用):
- * FakeStoryService 脚本化(nextBeat/generateBeat/summarize)+ 内容端口/舞台假件。
- * 终止姿势:脚本尾部放一个"挂到 signal abort"的 pad 拍,stopGeneration 确定性停循环。
+ * BeatRunner 测试共享假件(beatRunner.test.ts / m6.test.ts / saveSystem.test.ts 共用):
+ * FakeStoryService 脚本化(planAct/generateBeat/summarize,幕制 2026-10-18)+ 内容端口/舞台假件。
+ * - plans:总导演脚本(每幕一项;direction/hang 可选;hang=挂到 signal abort,确定性停循环)
+ * - segments:编剧脚本(按调用序;choice 续写/中断再入都是新的一段)
  */
 import type {
-  BeatDirective,
+  ActPlan,
   ContentPort,
   GenerateBeatRequest,
-  NextBeatRequest,
+  PlanActRequest,
   StoryChunk,
   SummarizeRequest,
   Summary,
@@ -23,66 +24,73 @@ export const content: ContentPort = {
   displayNameOf: (who) => (who === "enagi" ? "陽見恵凪" : who),
 };
 
-export function fakeStage(): StagePort {
+/** 舞台假件:有状态 snapshot(bg 默认 classroom,与 ACT 对齐 → 幕首 bg 相同跳过) */
+export function fakeStage(bg: string | null = "classroom"): StagePort {
+  let current = bg;
   return {
-    bg: () => {},
+    bg: (a) => {
+      current = a;
+    },
     sprite: (_o: SpriteOp) => {},
     shake: () => {},
     flash: () => {},
-    reset: () => {},
-    snapshot: () => ({ bg: null, bgm: null, sprites: {} }),
+    reset: () => {
+      current = null;
+    },
+    snapshot: () => ({ bg: current, bgm: null, sprites: {} }),
     restore: () => {},
   };
 }
 
-export const DIRECTIVE: BeatDirective = {
+export const ACT: ActPlan = {
   scene: { bg: "classroom", bgm: null, cast: ["enagi"] },
-  goal: "再会",
-  endsWith: "beatEnd",
-  maxLines: 6,
+  actGoal: "再会の幕",
+  beats: [{ goal: "教室の探索と再会", endsWith: "sceneEnd", maxLines: 6 }],
 };
 
 export type Chunks = StoryChunk[] | ((req: GenerateBeatRequest) => AsyncGenerator<StoryChunk, void, unknown> | StoryChunk[]);
 
-export interface ScriptEntry {
-  directive?: BeatDirective;
-  chunks?: Chunks;
-  /** 垫拍:nextBeat 挂到 signal abort(此时 directing/writing 还没发,status 序列确定) */
+export interface PlanEntry {
+  /** planAct 返回的幕设计(缺省 ACT) */
+  plan?: ActPlan;
+  /** 新走向(缺省 null=沿用) */
+  direction?: string | null;
+  /** 垫幕:planAct 挂到 signal abort(此时 directing 还没发,status 序列确定) */
   hang?: boolean;
 }
 
-/** 挂到 abort 的垫拍:让循环停在 nextBeat 里,stopGeneration 确定性收尾 */
-export const pad = (): ScriptEntry => ({ hang: true });
+/** 挂到 abort 的垫幕:让循环停在 planAct 里,stopGeneration 确定性收尾 */
+export const pad = (): PlanEntry => ({ hang: true });
 
-export function fakeStory(script: ScriptEntry[], cannedSummary?: Summary) {
-  const nextCalls: NextBeatRequest[] = [];
+export function fakeStory(plans: PlanEntry[], segments?: Chunks[], cannedSummary?: Summary) {
+  const planCalls: PlanActRequest[] = [];
   const genReqs: GenerateBeatRequest[] = [];
   const summarizeCalls: SummarizeRequest[] = [];
-  let i = 0;
+  let pi = 0;
+  let si = 0;
   return {
-    nextCalls,
+    planCalls,
     genReqs,
     summarizeCalls,
-    async nextBeat(req: NextBeatRequest): Promise<BeatDirective> {
-      nextCalls.push(req);
-      const entry = script[i];
+    async planAct(req: PlanActRequest): Promise<{ direction: string | null; act: ActPlan }> {
+      planCalls.push(req);
+      const entry = plans[pi++];
       if (entry?.hang) {
         const sig = req.signal;
         if (sig && !sig.aborted) {
           await new Promise<void>((resolve) => sig.addEventListener("abort", () => resolve(), { once: true }));
         }
       }
-      return entry?.directive ?? DIRECTIVE;
+      return { direction: entry?.direction ?? null, act: entry?.plan ?? ACT };
     },
     async *generateBeat(req: GenerateBeatRequest): AsyncGenerator<StoryChunk, void, unknown> {
       genReqs.push(req);
-      const entry = script[i];
-      i++;
-      if (!entry) {
+      const seg = segments?.[si++];
+      if (!seg) {
         yield { kind: "aborted", reason: "script exhausted", canContinue: false };
         return;
       }
-      const chunks = typeof entry.chunks === "function" ? entry.chunks(req) : entry.chunks;
+      const chunks = typeof seg === "function" ? seg(req) : seg;
       yield* chunks;
     },
     async summarize(req: SummarizeRequest): Promise<Summary> {

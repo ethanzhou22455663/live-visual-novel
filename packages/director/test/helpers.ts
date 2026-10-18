@@ -2,7 +2,7 @@
  * M3 测试夹具:最小内容包(2 角色/1 场景/1 BGM/2 世界书条目)+ FakeLlm。
  * 全年龄占位文案;测试不依赖真实资产。
  */
-import type { BeatDirective, ContentPack } from "@gal/shared";
+import type { ActPlan, ContentPack } from "@gal/shared";
 import type { ChatOnceOptions, LlmClient } from "../src/llm/client.ts";
 import type { StreamChatOptions } from "../src/llm/deepseek.ts";
 
@@ -39,11 +39,10 @@ export function makePack(): ContentPack {
   };
 }
 
-export const DIRECTIVE: BeatDirective = {
+export const ACT: ActPlan = {
   scene: { bg: "教室", bgm: null, cast: ["enagi"] },
-  goal: "放課後の教室で、歌う声の主と再会する",
-  endsWith: "beatEnd",
-  maxLines: 6,
+  actGoal: "放課後の教室で、歌う声の主と再会する",
+  beats: [{ goal: "教室の探索と再会", endsWith: "sceneEnd", maxLines: 6 }],
 };
 
 export interface FakeLlmOptions {

@@ -1,16 +1,16 @@
 /**
- * BeatRunner(plan §1.4):beat 主循环,engine 侧唯一"驾驶者"。
- * nextBeat → beginTurn → generateBeat 逐块消费 → commit 事务点 → 选项停等 →
- * sceneEnd 摘要 → 循环。演出(打字/立绘/语音)全部归引擎显示泵(2026-10-17 重写):
- * runner 只 commit 状态,选项拍等 engine.whenIdle(泵到达→offer→玩家选)。
+ * BeatRunner(plan §1.4,2026-10-18 幕制):beat 主循环,engine 侧唯一"驾驶者"。
+ * 以「幕」为单位:planAct(总导演:全局走向+幕设计)→ 幕首系统落实场景(bg/bgm)
+ * → generateBeat 整幕流式 → choice 行停等玩家 → 续写至 sceneEnd → 幕尾摘要
+ * → 大纲游标推进 → 循环。大纲只是起点骨架,走完后总导演按全局走向接管(不终局)。
+ * 演出(打字/立绘/语音)全部归引擎显示泵;runner 只 commit 状态,选项等 engine.whenIdle。
  * 打断 = 只 abort 生成;已提交行保留,继续按玩家节奏显示。
- * summary/outlineBeatIndex 由 runner 持有(M5 起入 SaveData)。
+ * 全局走向/已完成幕数/写作中的幕由 runner 持有(入 SaveData)。
  */
 import type {
-  BeatDirective,
+  ActPlan,
   ContentPort,
   HistoryItem,
-  SaveCurrentBeat,
   StoryChunk,
   StoryService,
   Summary,
@@ -26,7 +26,7 @@ export interface BeatRunnerDeps {
   bus: EventBus;
   story: StoryService;
   content: ContentPort;
-  /** 大纲节拍数(app 从 pack.story.outlineMd 算;null=无结构,游标恒 null) */
+  /** 大纲节点数(app 从 pack.story.outlineMd 算;null=无结构,游标恒 null) */
   outlineBeatCount: number | null;
   onError?: (err: unknown) => void;
 }
@@ -39,10 +39,20 @@ export class BeatRunner {
   #summary: Summary = EMPTY_SUMMARY;
   /** 摘要游标:上次 summarize 覆盖到的 lineId("" = 从未摘要) */
   #summarizedThrough: string = "";
-  /** 进行中的拍(writing 中点存档的 pendingContinuation 依据;拍边界为 null) */
-  #currentBeat: SaveCurrentBeat | null = null;
-  /** 读档续写:下一轮循环跳过导演,直接用存档里的拍指令(引擎已 resumeTurn) */
-  #resumeBeat: SaveCurrentBeat | null = null;
+  /** 全局走向(总导演输出;"" = 尚未生成) */
+  #direction = "";
+  /** 已完成幕数(走向刷新节拍 %5 用) */
+  #actsDone = 0;
+  /** 上一幕是否发生过玩家选择(下一幕强制刷新走向) */
+  #lastActHadChoice = false;
+  /** 本幕是否发生过玩家选择(consumeAct 中记账) */
+  #actHadChoice = false;
+  /** 写作中的幕(存档 pendingContinuation 依据;幕边界为 null) */
+  #actState: ActPlan | null = null;
+  /** 读档续写:下一轮 run() 跳过总导演,直接续写存档里的幕(引擎已 resumeTurn) */
+  #resumeAct: ActPlan | null = null;
+  /** runner 记忆的当前 BGM(DomStagePort 不管音频;相同即跳过不重复 commit) */
+  #lastBgm: string | null = null;
 
   constructor(deps: BeatRunnerDeps) {
     this.#deps = deps;
@@ -61,9 +71,19 @@ export class BeatRunner {
     return this.#outlineBeatIndex;
   }
 
-  /** 进行中的拍(存档 SaveSystem 用);拍边界/停止时 null */
-  get currentBeat(): SaveCurrentBeat | null {
-    return this.#currentBeat;
+  /** 全局走向(存档用) */
+  get storyDirection(): string {
+    return this.#direction;
+  }
+
+  /** 已完成幕数(存档用) */
+  get actsDone(): number {
+    return this.#actsDone;
+  }
+
+  /** 写作中的幕(存档 SaveSystem 用;幕边界/停止时 null) */
+  get currentAct(): ActPlan | null {
+    return this.#actState;
   }
 
   /** 打断当前生成(ESC/停止):只 abort LLM;不动显示泵——已提交行保留,按玩家节奏继续显示 */
@@ -71,14 +91,19 @@ export class BeatRunner {
     this.#abort?.abort();
   }
 
-  /** 新游戏:清空 ledger/摘要/游标,回 title 相位等待 start */
+  /** 新游戏:清空 ledger/走向/游标,回 title 相位等待 start */
   newGame(): void {
     if (this.#running) this.stopGeneration();
     this.#summary = EMPTY_SUMMARY;
     this.#summarizedThrough = "";
+    this.#direction = "";
+    this.#actsDone = 0;
+    this.#lastActHadChoice = false;
+    this.#actHadChoice = false;
     this.#outlineBeatIndex = this.#deps.outlineBeatCount === null ? null : 0;
-    this.#currentBeat = null;
-    this.#resumeBeat = null;
+    this.#actState = null;
+    this.#resumeAct = null;
+    this.#lastBgm = null;
     this.#deps.engine.replay([]);
     this.#deps.engine.setPhase("title");
   }
@@ -94,48 +119,57 @@ export class BeatRunner {
     try {
       engine.setPhase("play");
       while (!abort.signal.aborted) {
-        // ---- ① 导演(读档续写时跳过:拍号/游标已由 restore 恢复) ----
-        let directive: BeatDirective;
-        if (this.#resumeBeat) {
-          directive = this.#resumeBeat.directive;
-          this.#resumeBeat = null;
-          bus.emit("generation:status", { phase: "directing", turnNo: engine.turnNo });
+        // ---- ① 总导演(读档续写时跳过:幕/游标已由 restore 恢复) ----
+        let plan: ActPlan;
+        if (this.#resumeAct) {
+          plan = this.#resumeAct;
+          this.#resumeAct = null;
+          bus.emit("generation:status", { phase: "writing", turnNo: engine.turnNo });
         } else {
           bus.emit("generation:status", { phase: "directing", turnNo: engine.turnNo });
-          directive = await story.nextBeat({
+          const { direction, act } = await story.planAct({
             world: engine.world,
             summary: this.#summary,
             history: this.#history(),
             lastChoice: this.#lastChoiceLabel() ? { label: this.#lastChoiceLabel()! } : null,
             outlineBeatIndex: this.#outlineBeatIndex,
+            direction: this.#direction,
+            stage: this.#stageState(),
+            mustRefreshDirection: this.#mustRefreshDirection(),
             signal: abort.signal,
           });
           if (abort.signal.aborted) break;
+          if (direction) this.#direction = direction;
+          plan = act;
           engine.beginTurn();
         }
 
-        // ---- ② 编剧 ----
+        // ---- ② 幕首:系统落实场景(bg/bgm 相同即跳过;commit 进 ledger,存档/回放全对) ----
+        this.#applyScene(plan);
+
+        // ---- ③ 编剧:整幕流式(choice 停等 → 续写 → sceneEnd 幕终) ----
         const turnNo = engine.turnNo;
-        this.#currentBeat = { turnNo, directive };
+        this.#actState = plan;
+        this.#actHadChoice = false;
         bus.emit("generation:status", { phase: "writing", turnNo });
-        const end = await this.#consumeBeat(directive, turnNo, abort);
-        this.#currentBeat = null;
+        const end = await this.#consumeAct(plan, turnNo, abort);
+        this.#actState = null;
         if (abort.signal.aborted) break;
         if (end === "fatal") {
           bus.emit("generation:status", { phase: "error", turnNo, error: "生成失败" });
           break;
         }
 
-        // ---- ③ sceneEnd 摘要(失败沿用旧摘要,绝不阻塞) ----
+        // ---- ④ 幕尾:sceneEnd 摘要(失败沿用旧摘要,绝不阻塞)+ 游标推进 ----
         if (end === "sceneEnd") {
           await this.#summarize(abort.signal);
           if (abort.signal.aborted) break;
         }
-
-        // 大纲游标推进(有结构才推进)
         if (this.#outlineBeatIndex !== null && this.#deps.outlineBeatCount) {
           this.#outlineBeatIndex = Math.min(this.#outlineBeatIndex + 1, this.#deps.outlineBeatCount);
         }
+        this.#actsDone++;
+        this.#lastActHadChoice = this.#actHadChoice;
         // M5:auto 存档由 SaveSystem 挂 beat:end(choice 的收束走 choice:resolved)
         bus.emit("beat:end", { result: end, turnNo });
       }
@@ -157,20 +191,51 @@ export class BeatRunner {
     }
   }
 
-  /** 消费一拍;返回收束方式,"fatal" = 不可续的失败 */
-  async #consumeBeat(directive: BeatDirective, turnNo: number, abort: AbortController): Promise<"choice" | "beatEnd" | "sceneEnd" | "fatal"> {
+  /** 走向强制刷新节点:走向尚未生成 / 大纲骨架走完 / 每完成 5 幕 / 上一幕有玩家选择 */
+  #mustRefreshDirection(): boolean {
+    if (!this.#direction) return true;
+    const count = this.#deps.outlineBeatCount;
+    if (count !== null && this.#outlineBeatIndex !== null && this.#outlineBeatIndex >= count) return true;
+    if (this.#actsDone > 0 && this.#actsDone % 5 === 0) return true;
+    if (this.#lastActHadChoice) return true;
+    return false;
+  }
+
+  /** 幕首落实场景:bg/bgm 与当前状态相同即跳过;commit 进 ledger → 存档/回放/读档全对 */
+  #applyScene(plan: ActPlan): void {
+    const { engine } = this.#deps;
+    const cur = engine.stage.snapshot();
+    if (plan.scene.bg !== cur.bg) {
+      engine.commitModel({ t: "stage", op: { kind: "bg", asset: plan.scene.bg } });
+    }
+    const bgm = plan.scene.bgm ?? null;
+    if (bgm && bgm !== this.#lastBgm) {
+      engine.commitModel({ t: "stage", op: { kind: "bgm", asset: bgm, action: "play" } });
+    }
+    this.#lastBgm = bgm;
+  }
+
+  /** 当前舞台状态(总导演换场/选 cast 的决策依据) */
+  #stageState(): { bg: string | null; bgm: string | null; cast: string[] } {
+    const snap = this.#deps.engine.stage.snapshot();
+    return { bg: snap.bg, bgm: this.#lastBgm, cast: Object.keys(snap.sprites) };
+  }
+
+  /** 消费一幕(可多段):choice 停等玩家后续写,直到 sceneEnd;"fatal" = 不可续的失败 */
+  async #consumeAct(plan: ActPlan, turnNo: number, abort: AbortController): Promise<"choice" | "beatEnd" | "sceneEnd" | "fatal"> {
     const { engine, bus, story } = this.#deps;
     let continuation: { reason: string; count: number } | undefined;
-    let reentries = 0;
+    let disruptions = 0; // watchdog/parse 中断恢复(BeatRunner 再入,上限 2)
+    let choiceContinues = 0; // choice 后的续写(幕设计 choice ≤1 段 → 正常 1 次,保险上限 2)
 
     for (;;) {
-      const ledgerTail = this.#beatTail();
+      const ledgerTail = this.#actTail(turnNo);
       let done: Extract<StoryChunk, { kind: "done" }> | null = null;
       let sawFatalAbort = false;
-      let sawChoice = false; // 本拍 commit 过 choice 事件(到达时由泵 offer,whenIdle 等玩家)
+      let sawChoice = false;
 
       const stream = story.generateBeat({
-        directive,
+        act: plan,
         turnNo,
         world: engine.world,
         summary: this.#summary,
@@ -189,7 +254,10 @@ export class BeatRunner {
           case "commit": {
             // 状态入账即返回;演出(打字/立绘/语音)归引擎显示泵,这里不等任何演出
             const { ev } = engine.commitModel(chunk.event);
-            if (ev.t === "choice") sawChoice = true;
+            if (ev.t === "choice") {
+              sawChoice = true;
+              this.#actHadChoice = true;
+            }
             break;
           }
           case "aborted":
@@ -206,23 +274,31 @@ export class BeatRunner {
 
       if (abort.signal.aborted) return "beatEnd";
       if (sawFatalAbort) return "fatal";
-      // 续写再入(禁原样重试:ledgerTail 让模型看到已确定行)
-      if (!done && reentries < 2) {
-        reentries++;
-        continuation = { reason: "前次生成中断,继续本拍", count: reentries };
+      // 中断恢复(禁原样重试:ledgerTail 让模型看到已确定行)
+      if (!done && disruptions < 2) {
+        disruptions++;
+        continuation = { reason: "前次生成中断,继续本幕", count: disruptions };
         bus.emit("generation:status", { phase: "writing", turnNo });
         continue;
       }
 
-      // choice 拍:等泵到达选项条目并收束玩家选择(硬逻辑门;abort 由 signal 提前放行)。
-      // beatEnd/sceneEnd 不等显示——下一拍 LLM 生成与玩家阅读流水并行,显示队列吸收延迟。
+      // choice 段收束:等泵到达选项并等玩家选择 → **续写本幕剩余小节**(不结束幕)
       if (done?.result === "choice" && sawChoice) {
+        if (choiceContinues >= 2) return "beatEnd"; // 保险:幕设计异常时按幕尾处理,剧情不断
+        choiceContinues++;
         bus.emit("generation:status", { phase: "choicing", turnNo });
         await engine.whenIdle(abort.signal);
-        return abort.signal.aborted ? "beatEnd" : "choice";
+        if (abort.signal.aborted) return "beatEnd";
+        const label = this.#lastChoiceLabel() ?? "?";
+        continuation = {
+          reason: `玩家选择了「${label}」。从选择之后继续,写完本幕剩余小节直到 sceneEnd 收束`,
+          count: disruptions + choiceContinues,
+        };
+        bus.emit("generation:status", { phase: "writing", turnNo });
+        continue;
       }
       if (done) return done.result;
-      return "beatEnd"; // 两次续写仍未收束:按拍尾处理,剧情不断
+      return "beatEnd"; // 两次恢复仍未收束:按幕尾处理,剧情不断
     }
   }
 
@@ -238,10 +314,9 @@ export class BeatRunner {
     return null;
   }
 
-  /** 本拍已提交事件(同拍续写的 ledgerTail) */
-  #beatTail(): string {
+  /** 本幕已提交事件(同幕续写的 ledgerTail) */
+  #actTail(turnNo: number): string {
     const { engine } = this.#deps;
-    const turnNo = engine.turnNo;
     const lines: string[] = [];
     for (const e of engine.ledger) {
       if (e.kind === "ev" && e.turnNo === turnNo) {
@@ -273,17 +348,24 @@ export class BeatRunner {
     }
   }
 
-  /** M5 存档读恢复(runner 侧:摘要/大纲游标/拍进行中;引擎侧走 EngineCore.restoreFromSave) */
+  /** M5 存档读恢复(runner 侧:摘要/走向/游标/幕进行中;引擎侧走 EngineCore.restoreFromSave) */
   restore(state: {
     summary: Summary;
     summarizedThrough: string;
     outlineBeatIndex: number | null;
-    currentBeat?: SaveCurrentBeat | null;
+    currentAct?: ActPlan | null;
+    storyDirection?: string;
+    actsDone?: number;
   }): void {
     this.#summary = state.summary;
     this.#summarizedThrough = state.summarizedThrough;
     this.#outlineBeatIndex = state.outlineBeatIndex;
-    this.#resumeBeat = state.currentBeat ?? null;
-    this.#currentBeat = null;
+    this.#direction = state.storyDirection ?? "";
+    this.#actsDone = state.actsDone ?? 0;
+    this.#resumeAct = state.currentAct ?? null;
+    this.#actState = null;
+    this.#lastActHadChoice = false;
+    this.#actHadChoice = false;
+    this.#lastBgm = null; // 音频状态不持久化;下个非 null 幕设计自然重切
   }
 }

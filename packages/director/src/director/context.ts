@@ -3,8 +3,8 @@
  * system(格式合同+三张表) → 世界书命中 → 滚动摘要 → 世界状态 → 本拍指令 → 近期历史。
  * 全部纯函数,快照测试断言块序。
  */
-import type { BeatDirective, ContentPack, Summary, WorldState, WorldBookEntry } from "@gal/shared";
-import type { HistoryItem } from "@gal/shared";
+import type { ActPlan, ContentPack, Summary, WorldState, WorldBookEntry } from "@gal/shared";
+import type { HistoryItem, StageState } from "@gal/shared";
 import type { ChatMessage } from "../llm/deepseek.ts";
 import { directorSystem, WRITER_SYSTEM, continuationBlock } from "./prompts.ts";
 import { renderHistory } from "./history.ts";
@@ -75,12 +75,27 @@ export interface DirectorContextInput {
   history: readonly HistoryItem[];
   names: Record<string, string>;
   lastChoice?: { label: string } | null;
+  /** 当前全局走向(总导演上次输出;""=尚未生成) */
+  direction?: string;
+  /** 当前舞台状态(引擎真实呈现) */
+  stage?: StageState;
+  /** 强制刷新走向标记(大纲走完/每 5 幕/上一幕有选择)→ user 附【需新走向】 */
+  mustRefreshDirection?: boolean;
   /** 清单校验错误附进 user 重试一次(§1 失败策略) */
   validationErrors?: string[];
 }
 
+function renderStage(stage: StageState | undefined): string {
+  if (!stage) return "(情報なし)";
+  const on = stage.cast.length ? stage.cast.join(",") : "なし";
+  return `bg=${stage.bg ?? "なし"} ／ bgm=${stage.bgm ?? "なし"} ／ 在場=${on}`;
+}
+
 export function buildDirectorMessages(input: DirectorContextInput): ChatMessage[] {
   const user = [
+    `【全局走向】${input.direction || "(まだ方針なし)"}`,
+    input.mustRefreshDirection ? "【需新走向】本次必须输出新的 direction(null 禁止)。玩家刚做出选择时,走向必须反映它。" : null,
+    `【当前舞台】${renderStage(input.stage)}`,
     `【滚动摘要】${renderSummary(input.summary)}`,
     `【世界状态】${renderWorld(input.world)}`,
     `【近期历史】${renderHistory(input.history, 10, 2000, input.names) || "(なし)"}`,
@@ -88,7 +103,7 @@ export function buildDirectorMessages(input: DirectorContextInput): ChatMessage[
     input.validationErrors?.length
       ? `【前次输出错误】\n${input.validationErrors.join("\n")}\n上記を修正して再度 JSON のみ出力せよ。`
       : null,
-    `【任务】给出下一拍指令 JSON。上一拍 endsWith=sceneEnd 时应考虑换场。`,
+    `【任务】设计下一幕(direction+act JSON)。场景切换只发生在幕首。`,
   ]
     .filter((x): x is string => x !== null)
     .join("\n\n");
@@ -103,7 +118,8 @@ export interface WriterContextInput {
   worldbookEntries: readonly WorldBookEntry[];
   world: WorldState;
   summary: Summary;
-  directive: BeatDirective;
+  /** 本幕设计(总导演输出) */
+  act: ActPlan;
   history: readonly HistoryItem[];
   names: Record<string, string>;
   ledgerTail?: string;
@@ -113,14 +129,14 @@ export interface WriterContextInput {
 export function buildWriterMessages(input: WriterContextInput): ChatMessage[] {
   const scanTexts = [
     ...input.history.slice(-12).map((h) => (h.t === "choice" ? h.label : h.text)),
-    input.directive.goal,
+    input.act.actGoal,
   ];
   const wbBlock = renderWorldbookBlock(matchWorldbook(input.worldbookEntries, scanTexts));
   const parts = [
     wbBlock,
     `【滚动摘要】${renderSummary(input.summary)}`,
     `【世界状态】${renderWorld(input.world)}`,
-    `【本拍指令】${JSON.stringify(input.directive)}`,
+    `【本幕设计】${JSON.stringify(input.act)}`,
     `【近期历史】${renderHistory(input.history, 12, 2000, input.names) || "(なし)"}`,
   ];
   if (input.continuationReason !== undefined) {

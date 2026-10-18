@@ -28,6 +28,7 @@ import {
   trimLedger,
 } from "@gal/shared";
 import type {
+  ActPlan,
   ClockMode,
   ContentPort,
   EmotionTag,
@@ -37,7 +38,6 @@ import type {
   ModelScriptEvent,
   PresentationSnapshot,
   PublicChoiceOffer,
-  SaveCurrentBeat,
   SaveData,
   ScriptEvent,
   SpeakerId,
@@ -606,18 +606,25 @@ export class EngineCore {
 
   /**
    * 存档快照(plan §1.6):ledger 按摘要游标裁剪、cursor 独立存、
-   * currentBeat 在场 = writing 中点保存(pendingContinuation)。
+   * currentAct 在场 = 幕写作中保存(pendingContinuation)。
    * displayedThrough = 泵游标(读档按它切"已看/未读",未读尾部重读)。
-   * summary/outlineBeatIndex/currentBeat 由 BeatRunner 持有,经 parts 注入。
+   * summary/outlineBeatIndex/currentAct 由 BeatRunner 持有,经 parts 注入。
    */
   toSaveData(
-    parts: { summary?: Summary; outlineBeatIndex?: number | null; currentBeat?: SaveCurrentBeat | null } = {},
+    parts: {
+      summary?: Summary;
+      outlineBeatIndex?: number | null;
+      /** 写作中的幕(幕制 2026-10-18);在场 = pendingContinuation */
+      currentAct?: ActPlan | null;
+      /** 全局走向(runner 持有;空 = 未生成) */
+      storyDirection?: string;
+      /** 已完成幕数 */
+      actsDone?: number;
+    } = {},
   ): SaveData {
     const summary = parts.summary ?? EMPTY_SUMMARY;
     this.#checkpointPlayTime();
-    const label = parts.currentBeat
-      ? `${parts.currentBeat.turnNo}拍目:${parts.currentBeat.directive.goal}`
-      : `${this.#turnNo}拍目`;
+    const label = parts.currentAct ? `${this.#turnNo}幕:${parts.currentAct.actGoal}` : `${this.#turnNo}幕`;
     return {
       version: 1,
       meta: { savedAt: new Date().toISOString(), playTimeSec: this.#playTimeSec, chapterLabel: label },
@@ -627,8 +634,10 @@ export class EngineCore {
       presentation: this.presentationSnapshot(),
       cursor: this.cursor,
       outlineBeatIndex: parts.outlineBeatIndex ?? null,
-      pendingContinuation: parts.currentBeat != null,
-      currentBeat: parts.currentBeat ?? null,
+      pendingContinuation: parts.currentAct != null,
+      currentAct: parts.currentAct ? { plan: parts.currentAct } : null,
+      storyDirection: parts.storyDirection || undefined,
+      actsDone: parts.actsDone,
       readState: [...this.#readState],
       displayedThrough: this.#displayedThrough ?? undefined,
     };
@@ -638,7 +647,7 @@ export class EngineCore {
    * 从存档恢复引擎侧状态:ledger/world/cursor/舞台/游玩时间 + 未读尾部队列重建。
    * displayedThrough 命中 → 已看前缀同步 replay(视觉),未读尾部入显示队列让玩家重读
    * (未决 choice 重新 offer);命中不了(旧档/被摘要裁剪)→ 全部视为已看,旧行为。
-   * 摘要与拍进行中信息(summary/currentBeat)归 BeatRunner.restore,由 SaveSystem 协调。
+   * 摘要与幕进行中信息(summary/currentAct)归 BeatRunner.restore,由 SaveSystem 协调。
    * 拍状态以 save.cursor 为准——摘要裁剪可能清空 ledger,replay 的空档分支(新游戏语义)
    * 会把拍号回退到 1;仅「cursor={1,0} 且零提交」视作真新档。
    */

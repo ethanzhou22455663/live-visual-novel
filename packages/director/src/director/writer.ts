@@ -1,9 +1,12 @@
 /**
- * WriterService(ai-calls §2 调用②):NDJSON 流式编剧,全系统核心。
- * - 一次 SSE 调用;parser 换 ModelScriptEventSchema(turnNo 由引擎分配)
- * - watchdog:20s 无增量 → abort + aborted(canContinue) —— BeatRunner 带 ledgerTail 再入
- * - 内部续写:overrun(超 maxLines+4)/ missing-choice(endsWith=choice 无 choice 行)
- *   → user 尾部追加【续写指示】+ ledgerTail 再入一次(每拍内部上限 1 次)
+ * WriterService(ai-calls §2 调用②,2026-10-18 幕制):整幕长写,NDJSON 流式编剧。
+ * - 一次 SSE 调用写完整一幕(按幕设计 beats 顺序;maxTokens 4000 / watchdog 30s)
+ * - **choice 硬切**:流中一旦产出 choice 行立即 commit 并终止底层生成——
+ *   其后的内容依赖玩家选择,LLM 提前写完也必须丢弃;本段以 done{result:"choice"} 收束,
+ *   BeatRunner 等玩家选择后续写(ledgerTail + 玩家选择)写完本幕
+ * - watchdog:30s 无增量 → abort + aborted(canContinue) —— BeatRunner 带 ledgerTail 再入
+ * - 内部续写:overrun(超幕级行预算)/ missing-choice(幕设计含 choice 段但未写出)
+ *   → user 尾部追加【续写指示】+ ledgerTail 再入一次(每幕内部上限 1 次)
  * - **禁原样重试**——续写必须让模型看到已确定行
  * - Tier-2 窥视:peekPartialText 只喂打字机,绝不进状态/TTS
  */
@@ -43,7 +46,7 @@ export async function* withWatchdog(
     }
   } finally {
     // 不 await it.return:底层迭代器可能悬挂在未定的 next(fetch 卡死)上,await 会让
-    // WatchdogError 永远传不出去(整拍死锁)。收尾由 WriterService 自己的 ctrl.abort() 做。
+    // WatchdogError 永远传不出去(整幕死锁)。收尾由 WriterService 自己的 ctrl.abort() 做。
     try {
       it.return?.(undefined)?.catch(() => {});
     } catch {
@@ -73,6 +76,9 @@ export class WriterService {
     const { pack } = this.#deps;
     const tables = renderPackTables(pack);
     const names = Object.fromEntries(Object.values(pack.characters).map((c) => [c.id, c.displayName]));
+    // 幕级行预算:各小节 maxLines 之和 + 余量(overrun 检查用)
+    const lineBudget = req.act.beats.reduce((sum, b) => sum + b.maxLines, 0) + 8;
+    const wantsChoice = req.act.beats.some((b) => b.endsWith === "choice");
     // 内部续写预算:1 次(overrun/missing-choice 合并计);watchdog/parse 由 BeatRunner 再入
     let internalContinuation = req.continuation?.count ?? 0;
     let reason = req.continuation?.reason;
@@ -92,7 +98,7 @@ export class WriterService {
           worldbookEntries: pack.story.worldBook,
           world: req.world,
           summary: req.summary,
-          directive: req.directive,
+          act: req.act,
           history: req.history,
           names,
           // 续写再入时本 generator 从零开始,引擎侧已提交行(先前中断的调用)在 req.ledgerTail
@@ -107,6 +113,7 @@ export class WriterService {
         });
         let lineTail = "";
         let failure: "watchdog" | "parse" | null = null;
+        let cutByChoice = false;
 
         try {
           const stream = withWatchdog(
@@ -116,56 +123,76 @@ export class WriterService {
               model: this.#deps.model,
               messages,
               temperature: 0.9,
-              maxTokens: 1200,
+              maxTokens: 4000,
               signal,
             }),
-            this.#deps.watchdogMs ?? 20_000,
+            this.#deps.watchdogMs ?? 30_000,
           );
           for await (const delta of stream) {
             lineTail += delta;
+            let stop = false;
             for (const ev of parser.push(delta)) {
               if (ev.t === "say" || ev.t === "narrate") lineCount++;
               else if (ev.t === "choice") sawChoice = true;
               committedEvents.push(ev);
               yield { kind: "commit", event: ev };
+              if (ev.t === "choice") {
+                // choice 硬切:其后内容依赖玩家选择,确定性终止底层生成并丢弃
+                cutByChoice = true;
+                stop = true;
+                ctrl.abort();
+                break;
+              }
             }
+            if (stop) break;
             lineTail = lineTail.slice(Math.max(lineTail.lastIndexOf("\n") + 1, 0));
             const preview = peekPartialText(lineTail);
             if (preview) yield { kind: "preview", text: preview };
           }
-          for (const ev of parser.end()) {
-            if (ev.t === "say" || ev.t === "narrate") lineCount++;
-            else if (ev.t === "choice") sawChoice = true;
-            committedEvents.push(ev);
-            yield { kind: "commit", event: ev };
+          if (!cutByChoice) {
+            for (const ev of parser.end()) {
+              if (ev.t === "say" || ev.t === "narrate") lineCount++;
+              else if (ev.t === "choice") sawChoice = true;
+              committedEvents.push(ev);
+              yield { kind: "commit", event: ev };
+            }
           }
         } catch (e) {
-          if (e instanceof WatchdogError) failure = "watchdog";
-          else if (e instanceof ParserAbortedError) failure = "parse";
-          else {
+          if (cutByChoice) {
+            // choice 硬切引发的中断(预期路径):不当失败
+          } else if (e instanceof WatchdogError) {
+            failure = "watchdog";
+          } else if (e instanceof ParserAbortedError) {
+            failure = "parse";
+          } else {
             yield { kind: "aborted", reason: `LLM 流失败:${e instanceof Error ? e.message : String(e)}`, canContinue: false };
             return;
           }
         }
 
+        if (cutByChoice) {
+          yield { kind: "done", result: "choice", lineCount };
+          return;
+        }
         if (failure) {
           // 半行原子丢弃已由 parser.abort 负责;已提交行保留生效
           yield { kind: "aborted", reason: failure === "watchdog" ? "生成停滞" : "连续坏行", canContinue: true };
           return;
         }
 
-        const overran = lineCount > req.directive.maxLines + 4;
-        const missingChoice = req.directive.endsWith === "choice" && !sawChoice;
+        const overran = lineCount > lineBudget;
+        const missingChoice = wantsChoice && !sawChoice;
         if ((overran || missingChoice) && internalContinuation < 1) {
           internalContinuation++;
-          reason = overran ? "overrun:超出行数预算,尽快收尾" : "missing-choice:本拍应以 choice 行收束";
+          reason = overran ? "overrun:超出行数预算,尽快收束本幕" : "missing-choice:本幕设计中含 choice 小节,应在选项处收束";
           this.#deps.onError?.(`编剧续写纠正(${reason})`);
           continue;
         }
 
+        // 自然流结束 = 幕终(幕设计校验保证最后一段 sceneEnd)
         yield {
           kind: "done",
-          result: sawChoice ? "choice" : req.directive.endsWith,
+          result: "sceneEnd",
           lineCount,
         };
         return;

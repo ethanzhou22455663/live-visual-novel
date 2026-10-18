@@ -2,12 +2,12 @@
  * SaveData v1(plan §1.6):槽位存档的唯一形态。
  * - ledger 按 summarizedThroughLineId 裁剪(摘要已覆盖的行不入档,localStorage 5MB 红线)
  * - cursor 独立于 ledger 存在(裁剪后 ledger 可为空,游标语义不丢)
- * - pendingContinuation=true ⇒ currentBeat 必在(writing 中点保存,读档续写同一拍)
+ * - pendingContinuation=true ⇒ currentAct 必在(幕写作中保存,读档续写同一幕)
  * - migrations 链:v<n> → v<n+1>,migrateSave 拒绝过新的版本
  */
 import { z } from "zod";
-import { BeatDirectiveSchema } from "../protocol/directive.ts";
-import type { BeatDirective } from "../protocol/directive.ts";
+import { ActPlanSchema } from "../protocol/directive.ts";
+import type { ActPlan } from "../protocol/directive.ts";
 import { ScriptEventSchema, WorldDeltaSchema } from "../protocol/schema.ts";
 import { PresentationSnapshotSchema } from "../protocol/schema.ts";
 import type { PresentationSnapshot } from "../ports/index.ts";
@@ -65,15 +65,15 @@ export const SaveDataSchema = z.object({
   cursor: z.object({ turnNo: z.number().int(), seq: z.number().int() }),
   outlineBeatIndex: z.number().int().nullable(),
   pendingContinuation: z.boolean(),
-  currentBeat: z
-    .object({
-      turnNo: z.number().int(),
-      directive: BeatDirectiveSchema,
-    })
-    .nullable(),
   readState: z.array(z.string()),
   /** 最后已看行(显示泵游标;缺省 = 旧档,读档视为全部已看。2026-10-17 显示泵重写) */
   displayedThrough: z.string().optional(),
+  /** 全局走向(总导演上次输出;缺省 = 旧档,读档视为未生成,下次强制刷新) */
+  storyDirection: z.string().optional(),
+  /** 写作中的幕(幕制 2026-10-18);缺省/null = 幕边界或旧档 → 读档重新规划 */
+  currentAct: z.object({ plan: ActPlanSchema }).nullable().optional(),
+  /** 已完成幕数(走向刷新节拍 %5 用;缺省 = 旧档按 0) */
+  actsDone: z.number().int().min(0).optional(),
 });
 
 export interface SaveMeta {
@@ -81,11 +81,6 @@ export interface SaveMeta {
   playTimeSec: number;
   chapterLabel: string;
   slot?: string;
-}
-
-export interface SaveCurrentBeat {
-  turnNo: number;
-  directive: BeatDirective;
 }
 
 export interface SaveData {
@@ -98,9 +93,11 @@ export interface SaveData {
   cursor: { turnNo: number; seq: number };
   outlineBeatIndex: number | null;
   pendingContinuation: boolean;
-  currentBeat: SaveCurrentBeat | null;
   readState: string[];
   displayedThrough?: string;
+  storyDirection?: string;
+  currentAct?: { plan: ActPlan } | null;
+  actsDone?: number;
 }
 
 // ---------- 裁剪与迁移 ----------

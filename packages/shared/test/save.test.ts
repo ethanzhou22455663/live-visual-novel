@@ -35,7 +35,7 @@ const choiceEntry = (turnNo: number, seq: number): LedgerEntry => ({
 function makeSave(ledger: LedgerEntry[]): SaveData {
   return {
     version: 1,
-    meta: { savedAt: "2026-10-16T00:00:00.000Z", playTimeSec: 42.5, chapterLabel: "1拍目:再会" },
+    meta: { savedAt: "2026-10-16T00:00:00.000Z", playTimeSec: 42.5, chapterLabel: "1幕:再会" },
     world: { affection: { enagi: 5 }, flags: { met: true } },
     summary: { ...EMPTY_SUMMARY, summarizedThroughLineId: "" },
     ledger,
@@ -43,7 +43,6 @@ function makeSave(ledger: LedgerEntry[]): SaveData {
     cursor: cursorAfter(ledger),
     outlineBeatIndex: 0,
     pendingContinuation: false,
-    currentBeat: null,
     readState: [],
   };
 }
@@ -75,15 +74,38 @@ describe("SaveDataSchema / migrateSave", () => {
     expect(migrateSave(JSON.stringify(save))).toEqual(save);
   });
 
-  it("mid-beat 档:pendingContinuation+currentBeat 合法;缺字段拒", () => {
+  it("幕写作中档:pendingContinuation+currentAct 合法;旧档的 currentBeat 键被忽略(strip)", () => {
     const save = makeSave([]);
     save.pendingContinuation = true;
-    save.currentBeat = { turnNo: 3, directive: { scene: { bg: "classroom", bgm: null, cast: ["enagi"] }, goal: "再会", endsWith: "beatEnd", maxLines: 6 } };
-    expect(SaveDataSchema.parse(save).currentBeat).toEqual(save.currentBeat);
+    save.currentAct = {
+      plan: {
+        scene: { bg: "classroom", bgm: null, cast: ["enagi"] },
+        actGoal: "再会",
+        beats: [{ goal: "再会の時間", endsWith: "sceneEnd", maxLines: 8 }],
+      },
+    };
+    expect(SaveDataSchema.parse(save).currentAct).toEqual(save.currentAct);
+
+    // 旧格式档(带 currentBeat 键)→ zod strip,仍合法(向后兼容)
+    const legacy = makeSave([]) as unknown as Record<string, unknown>;
+    legacy.currentBeat = { turnNo: 3, directive: { scene: { bg: "教室", bgm: null, cast: ["enagi"] }, goal: "再会", endsWith: "beatEnd", maxLines: 6 } };
+    const parsed = SaveDataSchema.parse(legacy) as Record<string, unknown>;
+    expect("currentBeat" in parsed).toBe(false);
+    expect(parsed.pendingContinuation).toBe(false);
 
     const broken = makeSave([]) as unknown as Record<string, unknown>;
     delete broken.cursor;
     expect(SaveDataSchema.safeParse(broken).success).toBe(false);
+  });
+
+  it("storyDirection/actsDone(幕制 2026-10-18):可选字段往返;缺省零迁移直通", () => {
+    const withDir = { ...makeSave([evEntry(1, 0, "あ")]), storyDirection: "次は日常パートへ", actsDone: 3 };
+    expect(SaveDataSchema.parse(withDir).storyDirection).toBe("次は日常パートへ");
+    expect(SaveDataSchema.parse(withDir).actsDone).toBe(3);
+    const legacy = makeSave([evEntry(1, 0, "あ")]);
+    const parsed = SaveDataSchema.parse(legacy) as Record<string, unknown>;
+    expect("storyDirection" in parsed).toBe(false);
+    expect(migrateSave(JSON.stringify(legacy))).toEqual(legacy);
   });
 
   it("过新版本拒载;缺迁移步骤拒;v1 直通", () => {

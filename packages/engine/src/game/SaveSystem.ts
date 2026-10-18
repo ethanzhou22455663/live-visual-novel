@@ -2,8 +2,8 @@
  * SaveSystem(plan §1.6/M5):槽位管理 + auto 存档 + 读档续写的协调者。
  * - 槽位:自动 1 槽 + 手动 3 槽(用户裁决,无 quick);存储经 StoragePort(app 注入
  *   LocalStorageAdapter,测试注入 MemoryStorage)
- * - 写入时机:显示边界。writing 中点手动存档 → 挂起到下一个 display:drained(泵排空,
- *   commit 现遥遥领先于显示,必须在显示边界兑现)快照,此时 runner.currentBeat 在场
+ * - 写入时机:显示边界。幕写作中手动存档 → 挂起到下一个 display:drained(泵排空,
+ *   commit 现遥遥领先于显示,必须在显示边界兑现)快照,此时 runner.currentAct 在场
  *   ⇒ pendingContinuation=true
  * - auto 触发:beat:end(beatEnd/sceneEnd)与 choice:resolved(choice 收束瞬间)
  * - 读档:EngineCore.restoreFromSave(引擎侧)+ BeatRunner.restore(摘要/拍进行中),
@@ -61,7 +61,7 @@ export class SaveSystem {
         if (!this.#deferredSlot) return;
         const d = this.#deferredSlot;
         this.#deferredSlot = null;
-        this.#writeNow(d.slot, d.label); // 此刻 currentBeat 在场 ⇒ pendingContinuation
+        this.#writeNow(d.slot, d.label); // 此刻 currentAct 在场 ⇒ pendingContinuation
       }),
       // choice:resolved 已在 choice 事务点发出 → world 已折叠,快照即所选结果
       deps.bus.on("choice:resolved", () => this.save("auto")),
@@ -86,7 +86,7 @@ export class SaveSystem {
   save(slot: SaveSlot, label?: string): SaveResult {
     if (!isSaveSlot(slot)) return { ok: false, reason: "bad-data" };
     const runner = this.#getRunner();
-    if (runner?.running && runner.currentBeat) {
+    if (runner?.running && runner.currentAct) {
       this.#deferredSlot = { slot, label };
       return { ok: true, deferred: true };
     }
@@ -98,7 +98,9 @@ export class SaveSystem {
     const data = this.#engine.toSaveData({
       summary: runner?.summary,
       outlineBeatIndex: runner?.outlineBeatIndex ?? null,
-      currentBeat: runner?.currentBeat ?? null,
+      currentAct: runner?.currentAct ?? null,
+      storyDirection: runner?.storyDirection ?? "",
+      actsDone: runner?.actsDone ?? 0,
     });
     data.meta.slot = slot;
     if (label) data.meta.chapterLabel = label;
@@ -161,7 +163,9 @@ export class SaveSystem {
       summary: save.summary,
       summarizedThrough: save.summary.summarizedThroughLineId,
       outlineBeatIndex: save.outlineBeatIndex,
-      currentBeat: save.pendingContinuation ? save.currentBeat : null,
+      currentAct: save.pendingContinuation ? (save.currentAct?.plan ?? null) : null,
+      storyDirection: save.storyDirection ?? "",
+      actsDone: save.actsDone ?? 0,
     });
   }
 

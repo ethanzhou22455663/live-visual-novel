@@ -26,6 +26,22 @@ export class Summarizer {
     this.#opts = opts;
   }
 
+  /**
+   * LLM 输出宽松归一化(2026-10-18 手验:DeepSeek 常把 threads 输出成字符串数组、
+   * charUpdates 值输出成对象——直接 schema 校验必挂,摘要永败)。先规整再校验。
+   */
+  #normalize(obj: unknown): unknown {
+    const o = (obj ?? {}) as Record<string, unknown>;
+    const threads = Array.isArray(o.threads)
+      ? o.threads.map((t, i) => (typeof t === "string" ? { id: `t${i + 1}`, title: t, status: "open" } : t))
+      : [];
+    const charUpdates: Record<string, string> = {};
+    for (const [k, v] of Object.entries((o.charUpdates ?? {}) as Record<string, unknown>)) {
+      charUpdates[k] = typeof v === "string" ? v : JSON.stringify(v);
+    }
+    return { facts: typeof o.facts === "string" ? o.facts : "", charUpdates, threads };
+  }
+
   async summarize(req: {
     old: Summary;
     items: readonly HistoryItem[];
@@ -40,7 +56,7 @@ export class Summarizer {
         threads: req.old.threads,
       })}`,
       `【新增事件】${renderHistory(req.items, 40, 4000, req.names ?? {}) || "(なし)"}`,
-      `【任务】合并为新的摘要 JSON:facts(≤400字总述)、charUpdates(每角色变化记录)、threads(未决伏笔)。只输出 JSON。`,
+      `【任务】合并为新的摘要 JSON。结构严格如下(threads 是对象数组,不是字符串):{"facts":"≤400字の総述","charUpdates":{"<charId>":"変化の記録テキスト"},"threads":[{"id":"t1","title":"未決の伏線","status":"open"}]}。只输出 JSON。`,
     ].join("\n\n");
 
     const raw = await withRetries(
@@ -68,7 +84,7 @@ export class Summarizer {
     } catch {
       throw new LlmHttpError(502, `summarize 返回非 JSON:${raw.slice(0, 120)}`);
     }
-    const parsed = ModelSummarySchema.safeParse(obj);
+    const parsed = ModelSummarySchema.safeParse(this.#normalize(obj));
     if (!parsed.success) {
       throw new Error(`summarize schema 不合:${JSON.stringify(parsed.error.issues).slice(0, 300)}`);
     }
