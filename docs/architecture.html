@@ -212,7 +212,7 @@
       <text x="32" y="158" class="ndi">core/：状态机 · 演出时钟 · ledger fold · 存档策略</text>
       <text x="32" y="178" class="ndi">presentation/：打字机文本窗 · PixiJS 立绘差分</text>
       <text x="32" y="198" class="ndi">presentation/：Web Audio 三通道音频总线</text>
-      <text x="32" y="218" class="ndi">backlog（ledger 派生） · 已读管理</text>
+      <text x="32" y="218" class="ndi">backlog（ledger 派生） · 已读管理<span class="mono">【未实现→路线图】</span></text>
       <text x="32" y="238" class="ndi">saves/：localStorage · TauriFs 两套存档适配</text>
       <text x="406" y="132" text-anchor="end" class="layer">L1+L2</text>
 
@@ -241,7 +241,7 @@
       <text x="32" y="374" class="ndt">packages/tts-bridge · 语音适配层</text>
       <text x="32" y="396" class="ndi">TTSProvider 接口 + 降级链（本地→云→静音估时）</text>
       <text x="32" y="415" class="ndi">合成队列 1 并发 · configId 亲和排序（音色热切串行化）</text>
-      <text x="32" y="434" class="ndi">LRU 缓存（文本×音色） · Tauri 版磁盘缓存</text>
+      <text x="32" y="434" class="ndi">LRU 缓存（文本×音色）<span class="mono">【未实现→路线图】</span> · Tauri 版磁盘缓存<span class="mono">【未实现→路线图】</span></text>
       <text x="406" y="372" text-anchor="end" class="layer">L2</text>
 
       <!-- 外部服务 -->
@@ -272,7 +272,7 @@
       <text x="710" y="390" class="lbl">Key 只在用户本机</text>
     </svg>
     </div>
-    <figcaption><b>图 1 · 分层架构与层徽标。</b>实线=运行时数据流，虚线=装配期依赖注入。engine 与 director 互不依赖，只通过 L0 的 ScriptEvent 协议对话——剧情引擎可以拿录制的剧情文件做无头测试，浏览器/Tauri 两种形态只有 L3 一层不同。engine 与 director 内部各自再分 <span class="mono">core/</span>（L1）与适配目录（L2），包内同样执行「core 不见适配」。</figcaption>
+    <figcaption><b>图 1 · 分层架构与层徽标。</b><mark>实现状态(2026-10-18):标注「未实现」的为蓝图——语音 LRU 缓存、Tauri 适配/磁盘缓存、CloudTtsProvider、PixiJS 立绘层(现为 DomStagePort DOM 实现)、已读管理;其余均已落地。时序图旧口径 0.4s/句已改为 RTF 口径(见 docs/p0-tts-findings.md)。</mark>实线=运行时数据流，虚线=装配期依赖注入。engine 与 director 互不依赖，只通过 L0 的 ScriptEvent 协议对话——剧情引擎可以拿录制的剧情文件做无头测试，浏览器/Tauri 两种形态只有 L3 一层不同。engine 与 director 内部各自再分 <span class="mono">core/</span>（L1）与适配目录（L2），包内同样执行「core 不见适配」。</figcaption>
   </figure>
 
   <h3 style="font-size:16.5px; margin:30px 0 4px; font-weight:700">包间 import 矩阵（行=谁发起 import，列=import 谁）</h3>

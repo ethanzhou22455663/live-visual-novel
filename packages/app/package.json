@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "node ../../tools/content-sync/cli.mjs --local && vite",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "vite build"
   },
   "dependencies": {
     "@gal/director": "workspace:*",
@@ -21,5 +22,6 @@
     "@vitejs/plugin-react": "^6.1.2",
     "typescript": "^7.0.2",
     "vite": "^8.3.4"
-  }
+  },
+  "license": "MIT"
 }

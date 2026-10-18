@@ -6,10 +6,17 @@
     "dev": "turbo run dev --filter=@gal/app",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
-    "e2e:p0": "node tools/p0-e2e.mjs"
+    "e2e:p0": "node tools/p0-e2e.mjs",
+    "build": "turbo run build",
+    "depcruise": "depcruise \"packages/*/src/**/*.ts\" \"packages/*/test/**/*.ts\""
   },
   "devDependencies": {
+    "dependency-cruiser": "^18.6.0",
     "gray-matter": "^4.0.3",
     "turbo": "^2.11.7"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
   }
 }

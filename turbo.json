@@ -2,7 +2,19 @@
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
     "test": {},
-    "typecheck": { "dependsOn": ["^typecheck"] },
-    "dev": { "cache": false, "persistent": true }
+    "typecheck": {
+      "dependsOn": [
+        "^typecheck"
+      ]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "build": {
+      "dependsOn": [
+        "^build"
+      ]
+    }
   }
 }
