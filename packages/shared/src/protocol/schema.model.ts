@@ -13,11 +13,13 @@ export const ModelSayEventSchema = z.object({
   who: z.string().min(1),
   emotion: z.string(),
   text: z.string().min(1).refine(noRawNewline, "text 含裸换行"),
+  zh: z.string().optional(),
 });
 
 export const ModelNarrateEventSchema = z.object({
   t: z.literal("narrate"),
   text: z.string().min(1).refine(noRawNewline, "text 含裸换行"),
+  zh: z.string().optional(),
 });
 
 export const ModelStageEventSchema = z.object({

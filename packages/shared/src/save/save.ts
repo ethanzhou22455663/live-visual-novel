@@ -73,6 +73,10 @@ export const SaveDataSchema = z.object({
   currentAct: z.object({ plan: ActPlanSchema }).nullable().optional(),
   /** 已完成幕数(走向刷新节拍 %5 用;缺省 = 旧档按 0) */
   actsDone: z.number().int().min(0).optional(),
+  /** 当前个人线女主(2026-10-18 三段式;缺省/null = 共通线) */
+  route: z.string().nullable().optional(),
+  /** 进入个人线时的 actsDone(线内幕数 = actsDone - routeSince) */
+  routeSince: z.number().int().min(0).optional(),
 });
 
 export interface SaveMeta {
@@ -96,6 +100,10 @@ export interface SaveData {
   storyDirection?: string;
   currentAct?: { plan: ActPlan } | null;
   actsDone?: number;
+  /** 当前个人线女主(三段式 2026-10-18;null/缺省 = 共通线) */
+  route?: string | null;
+  /** 进入个人线时的 actsDone(线内幕数 = actsDone - routeSince) */
+  routeSince?: number;
 }
 
 // ---------- 裁剪与迁移 ----------

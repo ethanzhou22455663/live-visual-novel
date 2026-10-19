@@ -56,4 +56,13 @@ describe("模型面 schema(P1 §1.1:模型禁产 turnNo)", () => {
     });
     expect(commitModelEvent(m, 7).t).toBe("choice");
   });
+
+  it("zh 译文(2026-10-18 字幕翻译):模型可不给;给了则 commit 保留且过已提交 schema", () => {
+    expect(ModelSayEventSchema.safeParse({ t: "say", who: "enagi", emotion: "平常", text: "あ。" }).success).toBe(true);
+    const m = ModelSayEventSchema.parse({ t: "say", who: "enagi", emotion: "平常", text: "あ。", zh: "啊。" });
+    expect(m.zh).toBe("啊。");
+    const ev = commitModelEvent(m, 2);
+    expect((ev as { zh?: string }).zh).toBe("啊。");
+    expect(ScriptEventSchema.safeParse(ev).success).toBe(true);
+  });
 });

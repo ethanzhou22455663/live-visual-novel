@@ -103,4 +103,38 @@ describe("buildDirectorMessages", () => {
     expect(user!.content).toContain("[GLOBAL DIRECTION] (none yet)");
     expect(user!.content).toContain("[CURRENT STAGE] (no info)");
   });
+
+  it("[CURRENT ROUTE](三段式 2026-10-18):route 非空注入聚焦块(表示名);共通线无块", () => {
+    const base = {
+      outlineMd: makePack().story.outlineMd,
+      outlineBeatIndex: null,
+      tables: "T",
+      world: EMPTY_WORLD,
+      summary: EMPTY_SUMMARY,
+      history: [],
+      names: { enagi: "陽見恵凪" },
+    };
+    const [, routed] = buildDirectorMessages({ ...base, route: "enagi" });
+    expect(routed!.content).toContain("[CURRENT ROUTE] The story has entered 陽見恵凪's personal route");
+    const [, common] = buildDirectorMessages(base);
+    expect(common!.content).not.toContain("[CURRENT ROUTE]");
+  });
+
+  it("[FINAL ACT]:finale 在场替代 CURRENT ROUTE 块,收束指示带女主表示名", () => {
+    const [, user] = buildDirectorMessages({
+      outlineMd: makePack().story.outlineMd,
+      outlineBeatIndex: null,
+      tables: "T",
+      world: EMPTY_WORLD,
+      summary: EMPTY_SUMMARY,
+      history: [],
+      names: { enagi: "陽見恵凪" },
+      route: "enagi",
+      finale: { heroine: "enagi" },
+    });
+    expect(user!.content).toContain("[FINAL ACT]");
+    expect(user!.content).toContain("陽見恵凪");
+    expect(user!.content).toContain("sceneEnd");
+    expect(user!.content).not.toContain("[CURRENT ROUTE]");
+  });
 });

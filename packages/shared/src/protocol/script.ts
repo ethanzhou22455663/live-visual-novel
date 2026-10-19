@@ -15,12 +15,16 @@ export interface SayEvent {
   readonly emotion: EmotionTag;
   /** 禁止裸换行(schema 层校验) */
   readonly text: string;
+  /** 中文译文(app 层字幕翻译写入,attachTranslations;模型不产出) */
+  readonly zh?: string;
 }
 
 export interface NarrateEvent {
   readonly t: "narrate";
   readonly turnNo: number;
   readonly text: string;
+  /** 中文译文(同 say.zh) */
+  readonly zh?: string;
 }
 
 export type StageOp =

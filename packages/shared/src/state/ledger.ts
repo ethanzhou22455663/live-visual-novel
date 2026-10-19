@@ -50,8 +50,8 @@ export function toHistoryItems(entries: readonly LedgerEntry[], cap = 30): Histo
   const out: HistoryItem[] = [];
   for (const e of entries) {
     if (e.kind === "ev") {
-      if (e.ev.t === "say") out.push({ t: "say", who: e.ev.who, emotion: e.ev.emotion, text: e.ev.text });
-      else if (e.ev.t === "narrate") out.push({ t: "narrate", text: e.ev.text });
+      if (e.ev.t === "say") out.push({ t: "say", who: e.ev.who, emotion: e.ev.emotion, text: e.ev.text, zh: e.ev.zh });
+      else if (e.ev.t === "narrate") out.push({ t: "narrate", text: e.ev.text, zh: e.ev.zh });
     } else {
       out.push({ t: "choice", label: e.label });
     }

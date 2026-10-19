@@ -101,6 +101,8 @@ export class SaveSystem {
       currentAct: runner?.currentAct ?? null,
       storyDirection: runner?.storyDirection ?? "",
       actsDone: runner?.actsDone ?? 0,
+      route: runner?.route ?? null,
+      routeSince: runner?.routeSince ?? 0,
     });
     data.meta.slot = slot;
     if (label) data.meta.chapterLabel = label;
@@ -168,6 +170,8 @@ export class SaveSystem {
       currentAct: save.pendingContinuation ? (save.currentAct?.plan ?? null) : null,
       storyDirection: save.storyDirection ?? "",
       actsDone: save.actsDone ?? 0,
+      route: save.route ?? null,
+      routeSince: save.routeSince ?? 0,
     });
   }
 

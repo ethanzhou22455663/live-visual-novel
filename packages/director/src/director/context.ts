@@ -81,6 +81,10 @@ export interface DirectorContextInput {
   stage?: StageState;
   /** 强制刷新走向标记(大纲走完/每 5 幕/上一幕有选择)→ user 附【需新走向】 */
   mustRefreshDirection?: boolean;
+  /** 当前个人线女主(三段式;非空 → [CURRENT ROUTE] 块) */
+  route?: string | null;
+  /** 终幕标记(非 null → [FINAL ACT] 块,替代 CURRENT ROUTE) */
+  finale?: { heroine: string } | null;
   /** 清单校验错误附进 user 重试一次(§1 失败策略) */
   validationErrors?: string[];
 }
@@ -97,6 +101,12 @@ export function buildDirectorMessages(input: DirectorContextInput): ChatMessage[
     input.mustRefreshDirection
       ? "[NEED NEW DIRECTION] You MUST output a new direction this time (null is forbidden). If the player just made a choice, the direction must reflect it."
       : null,
+    // 三段式阶段机(2026-10-18):finale 在场时替代 route 块——终幕即收束,不再铺线
+    input.finale
+      ? `[FINAL ACT] This act is the finale of ${input.names[input.finale.heroine] ?? input.finale.heroine}'s route: write the protagonist's confession and marriage vow with her, and bring the whole story to its close. Resolve every open thread in the direction and summary using the affection built so far. The last beat must end with sceneEnd.`
+      : input.route
+        ? `[CURRENT ROUTE] The story has entered ${input.names[input.route] ?? input.route}'s personal route: every act design must cast her, and the other heroines step back to supporting roles.`
+        : null,
     `[CURRENT STAGE] ${renderStage(input.stage)}`,
     `[ROLLING SUMMARY] ${renderSummary(input.summary)}`,
     `[WORLD STATE] ${renderWorld(input.world)}`,

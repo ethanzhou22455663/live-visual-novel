@@ -9,7 +9,8 @@
  * - restoreFromSave 队列重建:只重读未读尾部;未决 choice 重新 offer;旧档全量已看
  */
 import { describe, expect, it, vi } from "vitest";
-import type { ContentPort, ModelScriptEvent } from "@gal/shared";
+import type { ContentPort, ModelScriptEvent, ScriptEvent } from "@gal/shared";
+import { toHistoryItems } from "@gal/shared";
 import { EngineCore } from "../src/core/EngineCore.ts";
 import { EventBus } from "../src/core/EventBus.ts";
 import { PresentationClock } from "../src/core/PresentationClock.ts";
@@ -46,22 +47,26 @@ function fakeStage(): StagePort & { calls: StageCall[]; snaps: unknown[] } {
   };
 }
 
-function makeEngine(opts: { cps?: number } = {}) {
+function makeEngine(
+  opts: { cps?: number; textOf?: (ev: Extract<ScriptEvent, { t: "say" | "narrate" }>) => string } = {},
+) {
   const bus = new EventBus();
   const clock = new PresentationClock();
   const stage = fakeStage();
+  const textEl = document.createElement("p");
   const engine = new EngineCore({
     bus,
     clock,
     stage,
     content,
-    textEl: document.createElement("p"),
+    textEl,
     cps: opts.cps ?? 2000, // 默认高字速:一帧打完,把时序焦点留给门控
+    textOf: opts.textOf,
   });
   engine.setPhase("play"); // 泵只在 play 相位显示(生产里由 BeatRunner.run 设置)
   const shows: string[] = [];
   bus.on("line:show", ({ lineId }) => shows.push(lineId));
-  return { bus, clock, stage, engine, shows };
+  return { bus, clock, stage, engine, shows, textEl };
 }
 
 /** happy-dom 的 rAF 由内部定时器驱动(~16ms/帧);一个 tick ≈ 一帧 */
@@ -332,5 +337,45 @@ describe("restoreFromSave:显示队列重建", () => {
     expect(shows2).toEqual([]); // 零重读
     expect(e2.stage.snaps.length).toBe(1); // presentation 权威恢复
     expect(e2.engine.cursor).toEqual({ turnNo: 1, seq: 2 });
+  });
+});
+
+describe("字幕翻译(textOf/attachTranslations,2026-10-18)", () => {
+  it("textOf 注入改变打字源:ev 带 zh 显示译文,否则原文(逐行捕获)", async () => {
+    const { bus, engine, textEl } = makeEngine({ textOf: (ev) => ev.zh ?? ev.text });
+    const seen: string[] = [];
+    bus.on("typewriter:done", () => seen.push(textEl.textContent ?? ""));
+    engine.setClockMode("fast");
+    engine.beginTurn();
+    // 模拟 attach 后的行:ev 自带 zh(commitModelEvent spread 保留;模型面不产出)
+    engine.commitModel({ t: "narrate", text: "日本語", zh: "中文" } as ModelScriptEvent);
+    engine.commitModel({ t: "narrate", text: "その二" });
+    await vi.waitFor(() => expect(engine.displayedThrough).toBe("1.1"));
+    expect(seen).toEqual(["中文", "その二"]);
+  });
+
+  it("attachTranslations:已提交行写 ledger ev.zh(随档);排队未显示的行同步补上", async () => {
+    const { engine, shows, textEl } = makeEngine({ textOf: (ev) => ev.zh ?? ev.text });
+    const typed: string[] = [];
+    engine.bus.on("typewriter:done", ({ lineId }) => typed.push(lineId));
+    engine.beginTurn(); // normal 模式:第一行打完停门等点击
+    const l1 = engine.commitModel({ t: "narrate", text: "一行" }).lineId;
+    const l2 = engine.commitModel({ t: "narrate", text: "二行" }).lineId;
+    await vi.waitFor(() => expect(typed).toEqual([l1])); // L1 打字完,门等待中(L2 仍在队列)
+
+    engine.attachTranslations([
+      { lineId: l1, zh: "一行中文" },
+      { lineId: l2, zh: "二行中文" },
+    ]);
+    expect(engine.ledger.find((e) => e.lineId === l1)).toMatchObject({ ev: { zh: "一行中文" } });
+    expect(toHistoryItems(engine.ledger, 10).map((h) => (h.t === "choice" ? undefined : h.zh))).toContain("一行中文");
+    expect(() => engine.attachTranslations([{ lineId: "9.9", zh: "x" }])).not.toThrow(); // 未知行安全忽略
+    expect(engine.toSaveData().ledger.find((e) => e.lineId === l1)).toMatchObject({ ev: { zh: "一行中文" } });
+
+    engine.advance(); // 放行 L1 → L2 打字:读队列补丁后的 ev.zh → 中文
+    await vi.waitFor(() => expect(textEl.textContent).toBe("二行中文"));
+    engine.advance(); // 放行 L2 → 泵排空
+    await vi.waitFor(() => expect(engine.displayedThrough).toBe(l2));
+    expect(shows).toEqual([l1, l2]);
   });
 });

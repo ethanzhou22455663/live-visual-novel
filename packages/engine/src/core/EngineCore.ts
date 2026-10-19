@@ -84,6 +84,8 @@ export interface EngineCoreDeps {
   /** BGM 指令出口(bootstrap 接 AudioBus;null=stop);不设 = 无声玩法(headless) */
   onBgm?: (assetId: string | null, fadeMs?: number) => void;
   onSe?: (assetId: string) => void;
+  /** 上屏文本源(app 层注入:UI 语言=中文且已有译文时显示 zh;缺省 = ev.text 日文原文) */
+  textOf?: (ev: Extract<ScriptEvent, { t: "say" | "narrate" }>) => string;
 }
 
 const AUTO_DWELL_MS = 800; // auto 模式行间停留(沿旧值)
@@ -111,6 +113,7 @@ export class EngineCore {
   #choiceOverlay: ChoiceOverlay | null = null;
   #onBgm: ((assetId: string | null, fadeMs?: number) => void) | null;
   #onSe: ((assetId: string) => void) | null;
+  #textOf: ((ev: Extract<ScriptEvent, { t: "say" | "narrate" }>) => string) | null;
 
   // ---- 显示泵状态 ----
   #queue: DisplayEntry[] = [];
@@ -134,6 +137,7 @@ export class EngineCore {
     this.content = deps.content;
     this.#onBgm = deps.onBgm ?? null;
     this.#onSe = deps.onSe ?? null;
+    this.#textOf = deps.textOf ?? null;
     this.#tw = new Typewriter(deps.textEl, { cps: deps.cps ?? 30 });
     if (deps.choiceRoot) {
       this.#choiceOverlay = new ChoiceOverlay({
@@ -341,6 +345,31 @@ export class EngineCore {
   // ---- 重放(读档/回溯;不发 line:commit/line:show,backlog/语音订阅者不受扰动) ----
 
   /**
+   * 字幕翻译回写(app 层非核心,2026-10-18):更新 ledger ev 的 zh 并通知
+   * (SaveData 随档持久化,回看/读档自然带中文)。已提交行不重打——显示中的行
+   * 保持原文,译文下一行生效;仍在显示队列里的行同步补上(泵到达时已可显示中文)。
+   */
+  attachTranslations(entries: readonly { lineId: LineId; zh: string }[]): void {
+    if (entries.length === 0) return;
+    const byId = new Map(entries.map((e) => [e.lineId, e.zh]));
+    let changed = false;
+    this.#ledger = this.#ledger.map((e) => {
+      if (e.kind !== "ev") return e;
+      const ev = e.ev;
+      const zh = byId.get(e.lineId);
+      if ((ev.t !== "say" && ev.t !== "narrate") || zh === undefined) return e;
+      changed = true;
+      return { ...e, ev: { ...ev, zh } };
+    });
+    if (changed) {
+      this.#queue = this.#queue.map((q) =>
+        q.kind === "line" && byId.has(q.lineId) ? { ...q, ev: { ...q.ev, zh: byId.get(q.lineId)! } } : q,
+      );
+      this.#notify();
+    }
+  }
+
+  /**
    * 状态按 entries 全量恢复;舞台视觉只按 visuals(=已看前缀)重放。
    * restoreFromSave 用两段式:未读尾部经队列重建(#enqueueFromLedger)让玩家重读。
    */
@@ -447,8 +476,9 @@ export class EngineCore {
     }
     this.bus.emit("line:show", { lineId: entry.lineId, ev });
     this.#notify();
-    // ② 打字(fast 入队即瞬完;打字中点击 → 补完 + 连点计数)
-    const typing = this.#tw.start(ev.text);
+    // ② 打字(fast 入队即瞬完;打字中点击 → 补完 + 连点计数)。
+    //    textOf 只换上屏文本:语音/日志/切句仍用原始 ev.text(日语),配音节奏不变
+    const typing = this.#tw.start(this.#textOf ? this.#textOf(ev) : ev.text);
     if (this.clock.mode === "fast") this.#tw.skip();
     if ((await this.#cancellable(epoch, typing)) === null) return false;
     this.bus.emit("typewriter:done", { lineId: entry.lineId });
@@ -609,6 +639,10 @@ export class EngineCore {
       storyDirection?: string;
       /** 已完成幕数 */
       actsDone?: number;
+      /** 当前个人线女主(三段式 2026-10-18;null/缺省 = 共通线) */
+      route?: string | null;
+      /** 进入个人线时的 actsDone(线内幕数 = actsDone - routeSince) */
+      routeSince?: number;
     } = {},
   ): SaveData {
     const summary = parts.summary ?? EMPTY_SUMMARY;
@@ -627,6 +661,8 @@ export class EngineCore {
       currentAct: parts.currentAct ? { plan: parts.currentAct } : null,
       storyDirection: parts.storyDirection || undefined,
       actsDone: parts.actsDone,
+      route: parts.route ?? null,
+      routeSince: parts.routeSince ?? 0,
       displayedThrough: this.#displayedThrough ?? undefined,
     };
   }

@@ -272,6 +272,45 @@
   background: var(--acc);
 }
 
+/* ---------- ending 画面(终幕收束;.title 同构,居中构图) ---------- */
+
+.ending {
+  position: absolute;
+  inset: 0;
+  display: block;
+  z-index: 20;
+}
+
+.ending .shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, rgba(4, 5, 7, 0.82) 0%, rgba(4, 5, 7, 0.55) 42%, rgba(4, 5, 7, 0.72) 100%);
+}
+
+.ending .logo {
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+  text-align: center;
+}
+
+.ending .logo .kicker {
+  font-size: 24px;
+  margin-bottom: 30px;
+}
+
+.ending .logo h1 {
+  font-size: 96px;
+}
+
+.ending .menu {
+  right: auto;
+  bottom: 96px;
+  left: 50%;
+  translate: -50%;
+  align-items: center;
+}
+
 .menu {
   position: absolute;
   right: 148px;

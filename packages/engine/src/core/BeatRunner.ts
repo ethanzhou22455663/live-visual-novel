@@ -5,7 +5,9 @@
  * → 大纲游标推进 → 循环。大纲只是起点骨架,走完后总导演按全局走向接管(不终局)。
  * 演出(打字/立绘/语音)全部归引擎显示泵;runner 只 commit 状态,选项等 engine.whenIdle。
  * 打断 = 只 abort 生成;已提交行保留,继续按玩家节奏显示。
- * 全局走向/已完成幕数/写作中的幕由 runner 持有(入 SaveData)。
+ * 全局走向/已完成幕数/写作中的幕/个人线(route+routeSince)由 runner 持有(入 SaveData)。
+ * 三段式阶段机(2026-10-18):共通线 →(好感达标)个人线 →(线内 ≥4 幕)[FINAL ACT] 终幕
+ * → sceneEnd → ending 相位收束;好感只是分线门槛,结局在线很后面。
  */
 import type {
   ActPlan,
@@ -20,6 +22,12 @@ import type { EngineCore } from "./EngineCore.ts";
 import type { EventBus } from "./EventBus.ts";
 
 const HISTORY_CAP = 30;
+
+/** 三段式阶段机(2026-10-18 裁决:好感只是门槛不是结局——达到即进入她的线,「线的开始≠end」) */
+/** 进入个人线的好感门槛(共通线存续条件:无人达标) */
+const LINE_ENTER_MIN = 15;
+/** 个人线内至少推进的幕数;线内幕数达标后的下一幕即终幕([FINAL ACT]) */
+const FINALE_ROUTE_ACTS = 4;
 
 export interface BeatRunnerDeps {
   engine: EngineCore;
@@ -49,6 +57,10 @@ export class BeatRunner {
   #actState: ActPlan | null = null;
   /** 读档续写:下一轮 run() 跳过总导演,直接续写存档里的幕(引擎已 resumeTurn) */
   #resumeAct: ActPlan | null = null;
+  /** 当前个人线女主(null=共通线;三段式 2026-10-18) */
+  #route: string | null = null;
+  /** 进入个人线时的 actsDone(线内幕数 = actsDone - routeSince) */
+  #routeSince = 0;
   /** runner 记忆的当前 BGM(DomStagePort 不管音频;相同即跳过不重复 commit) */
   #lastBgm: string | null = null;
 
@@ -84,6 +96,16 @@ export class BeatRunner {
     return this.#actState;
   }
 
+  /** 当前个人线女主(存档用;null=共通线) */
+  get route(): string | null {
+    return this.#route;
+  }
+
+  /** 进入个人线时的 actsDone(存档用) */
+  get routeSince(): number {
+    return this.#routeSince;
+  }
+
   /** 打断当前生成(ESC/停止):只 abort LLM;不动显示泵——已提交行保留,按玩家节奏继续显示 */
   stopGeneration(): void {
     this.#abort?.abort();
@@ -100,6 +122,8 @@ export class BeatRunner {
     this.#outlineBeatIndex = this.#deps.outlineBeatCount === null ? null : 0;
     this.#actState = null;
     this.#resumeAct = null;
+    this.#route = null;
+    this.#routeSince = 0;
     this.#lastBgm = null;
     this.#deps.engine.replay([]);
     this.#deps.engine.setPhase("title");
@@ -116,6 +140,19 @@ export class BeatRunner {
     try {
       engine.setPhase("play");
       while (!abort.signal.aborted) {
+        // ---- ⓪ 三段式阶段机:共通线→个人线→终幕(判定在本幕 planAct 前) ----
+        if (this.#route === null) {
+          const girl = this.#bestGirl();
+          if (girl) {
+            this.#route = girl;
+            this.#routeSince = this.#actsDone;
+          }
+        }
+        // 线内幕数达标 → 本幕即终幕(此后恒 true,sceneEnd 收束才退出;中断则下幕重试)
+        const finaleHeroine = this.#route !== null && this.#actsDone - this.#routeSince >= FINALE_ROUTE_ACTS
+          ? this.#route
+          : null;
+
         // ---- ① 总导演(读档续写时跳过:幕/游标已由 restore 恢复) ----
         let plan: ActPlan;
         if (this.#resumeAct) {
@@ -133,6 +170,8 @@ export class BeatRunner {
             direction: this.#direction,
             stage: this.#stageState(),
             mustRefreshDirection: this.#mustRefreshDirection(),
+            route: this.#route,
+            finale: finaleHeroine ? { heroine: finaleHeroine } : null,
             signal: abort.signal,
           });
           if (abort.signal.aborted) break;
@@ -174,6 +213,11 @@ export class BeatRunner {
         this.#lastActHadChoice = this.#actHadChoice;
         // M5:auto 存档由 SaveSystem 挂 beat:end(choice 的收束走 choice:resolved)
         bus.emit("beat:end", { result: end, turnNo });
+        // 终幕以 sceneEnd 收束 → ending 相位,退出循环(读过档则 diff 仍达标,终幕重排)
+        if (finaleHeroine !== null && end === "sceneEnd") {
+          engine.setPhase("ending");
+          break;
+        }
       }
       if (!abort.signal.aborted || engine.phase !== "choicing") {
         bus.emit("generation:status", { phase: "idle", turnNo: engine.turnNo });
@@ -201,6 +245,19 @@ export class BeatRunner {
     if (this.#actsDone > 0 && this.#actsDone % 5 === 0) return true;
     if (this.#lastActHadChoice) return true;
     return false;
+  }
+
+  /** 分线判定:好感最高且 ≥ LINE_ENTER_MIN 的可立绘角色(无立绘=主人公类,不分线);无人达标 → null */
+  #bestGirl(): string | null {
+    let best: string | null = null;
+    let bestVal = LINE_ENTER_MIN - 1;
+    for (const [id, v] of Object.entries(this.#deps.engine.world.affection)) {
+      if (v <= bestVal) continue;
+      if (this.#deps.content.emotionsOf(id).size === 0) continue;
+      best = id;
+      bestVal = v;
+    }
+    return best;
   }
 
   /** 幕首落实场景:bg/bgm 与当前状态相同即跳过;commit 进 ledger → 存档/回放/读档全对 */
@@ -289,6 +346,7 @@ export class BeatRunner {
       if (done?.result === "choice" && sawChoice) {
         if (choiceContinues >= 2) return "beatEnd"; // 保险:幕设计异常时按幕尾处理,剧情不断
         choiceContinues++;
+        bus.emit("segment:done", { turnNo }); // 本段(至 choice 硬切)收束 → app 字幕翻译触发点
         bus.emit("generation:status", { phase: "choicing", turnNo });
         await engine.whenIdle(abort.signal);
         if (abort.signal.aborted) return "beatEnd";
@@ -300,7 +358,10 @@ export class BeatRunner {
         bus.emit("generation:status", { phase: "writing", turnNo });
         continue;
       }
-      if (done) return done.result;
+      if (done) {
+        bus.emit("segment:done", { turnNo }); // 末段(至 sceneEnd/beatEnd)收束
+        return done.result;
+      }
       return "beatEnd"; // 两次恢复仍未收束:按幕尾处理,剧情不断
     }
   }
@@ -357,11 +418,15 @@ export class BeatRunner {
     currentAct?: ActPlan | null;
     storyDirection?: string;
     actsDone?: number;
+    route?: string | null;
+    routeSince?: number;
   }): void {
     this.#summary = state.summary;
     this.#outlineBeatIndex = state.outlineBeatIndex;
     this.#direction = state.storyDirection ?? "";
     this.#actsDone = state.actsDone ?? 0;
+    this.#route = state.route ?? null;
+    this.#routeSince = state.routeSince ?? 0;
     this.#resumeAct = state.currentAct ?? null;
     this.#actState = null;
     this.#lastActHadChoice = false;

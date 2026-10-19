@@ -46,7 +46,7 @@ export interface TtsProvider {
 export type ClockMode = "normal" | "fast" | "auto";
 
 export interface GameEventMap {
-  "engine:phase": { phase: "title" | "play" | "choicing" };
+  "engine:phase": { phase: "title" | "play" | "choicing" | "ending" };
   "generation:status": {
     phase: "idle" | "directing" | "writing" | "choicing" | "aborted" | "error";
     turnNo: number;
@@ -61,6 +61,8 @@ export interface GameEventMap {
   /** 显示队列排空(泵空闲):SaveSystem 在此兑现挂起存档;displayedThrough = 最后已看行 */
   "display:drained": { displayedThrough: LineId | null };
   "typewriter:done": { lineId: LineId };
+  /** 编剧一个生成段收束(整段/choice 硬切段/续写段):app 字幕翻译在此触发(非核心,2026-10-18) */
+  "segment:done": { turnNo: number };
   /** 只携带公开视图;hidden 后果仅 resolveChoice 路径可见(plan §1.5) */
   "choice:offered": { choice: PublicChoiceOffer };
   "choice:resolved": { optionId: string; label: string };

@@ -107,6 +107,26 @@ describe("SaveDataSchema / migrateSave", () => {
     expect(migrateSave(JSON.stringify(legacy))).toEqual(legacy);
   });
 
+  it("route/routeSince(三段式 2026-10-18):可选字段往返;共通线 null 合法;旧档缺省直通", () => {
+    const withRoute = { ...makeSave([evEntry(1, 0, "あ")]), route: "enagi", routeSince: 3 };
+    expect(SaveDataSchema.parse(withRoute).route).toBe("enagi");
+    expect(SaveDataSchema.parse(withRoute).routeSince).toBe(3);
+    expect(migrateSave(JSON.stringify(withRoute)).route).toBe("enagi");
+    expect(SaveDataSchema.parse({ ...makeSave([]), route: null }).route).toBeNull(); // 共通线
+    const legacy = makeSave([evEntry(1, 0, "あ")]);
+    const parsed = SaveDataSchema.parse(legacy) as Record<string, unknown>;
+    expect("route" in parsed).toBe(false);
+    expect(migrateSave(JSON.stringify(legacy))).toEqual(legacy);
+  });
+
+  it("ev.zh 译文随档(2026-10-18):已提交面 schema 带 zh,parse 不 strip", () => {
+    const withZh = makeSave([
+      { kind: "ev", lineId: "1.0", turnNo: 1, seq: 0, ev: { t: "narrate", turnNo: 1, text: "あ", zh: "啊" } },
+    ]);
+    const parsed = migrateSave(JSON.stringify(withZh));
+    expect((parsed.ledger[0] as { ev: { zh?: string } }).ev.zh).toBe("啊");
+  });
+
   it("过新版本拒载;缺迁移步骤拒;v1 直通", () => {
     const future = { ...makeSave([]), version: SAVE_VERSION + 1 };
     expect(() => migrateSave(future)).toThrow(/版本过新/);

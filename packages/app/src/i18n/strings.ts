@@ -33,6 +33,9 @@ export interface Strings {
   doSave: string;
   doLoad: string;
   doDelete: string;
+  /** ending 画面(终幕 sceneEnd 后):标题与回标题按钮 */
+  endTitle: string;
+  endBack: string;
 }
 
 export const STRINGS: Record<Lang, Strings> = {
@@ -65,6 +68,8 @@ export const STRINGS: Record<Lang, Strings> = {
     doSave: "保存",
     doLoad: "ロード",
     doDelete: "消去",
+    endTitle: "物語・完",
+    endBack: "タイトルへ",
   },
   zh: {
     title: "柠檬水工厂",
@@ -95,6 +100,8 @@ export const STRINGS: Record<Lang, Strings> = {
     doSave: "保存",
     doLoad: "读取",
     doDelete: "删除",
+    endTitle: "故事・完",
+    endBack: "回到标题",
   },
 };
 

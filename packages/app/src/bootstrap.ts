@@ -26,6 +26,8 @@ import { GptSovitsProvider, SilentProvider, SynthQueue, TtsRouter } from "@gal/t
 import type { GptSovitsRefs } from "@gal/tts-bridge";
 import { LocalStorageAdapter } from "./storage/LocalStorageAdapter.ts";
 import { applySettings, loadSettings } from "./state/settings.ts";
+import { createTranslator } from "./ai/translate.ts";
+import type { Lang } from "./i18n/strings.ts";
 
 export interface Assembled {
   pack: ContentPack;
@@ -45,6 +47,10 @@ export interface Assembled {
   continueFrom(save: SaveData): Promise<void>;
   /** 停止生成:只 abort;已提交行保留,继续按玩家节奏显示 */
   stop(): void;
+  /** ending 画面「タイトルへ」:清空回标题 */
+  newGame(): void;
+  /** UI 语言切换(设置面板):上屏文本源(textOf)下一行生效 */
+  setUiLang(l: Lang): void;
   warnings: string[];
 }
 
@@ -168,6 +174,9 @@ async function assemble(): Promise<Assembled> {
   // ---- 音频总线(bgm/se 出口要被 EngineCore 引用,先于 engine 建立坑#16:解锁仍归手势) ----
   const audio = new AudioBus();
 
+  // UI 语言(设置面板可切):textOf 闭包读它,中文且已有译文时台词直接显示中文(2026-10-18)
+  let uiLang: Lang = loadSettings().lang;
+
   // ---- 引擎核心 ----
   const bus = new EventBus();
   const clock = new PresentationClock();
@@ -184,6 +193,9 @@ async function assemble(): Promise<Assembled> {
     textEl,
     choiceRoot: stageEl, // 选项浮层挂舞台内(engine DOM;z-index 6:窗上、面板下)
     cps: 28,
+    // 上屏文本源:lang=zh 且已有译文 → 中文;否则日文原文。只影响打字内容——
+    // 语音/切句/日志仍用原始 ev.text(日语),配音节奏与字幕语言解耦
+    textOf: (ev) => (uiLang === "zh" && ev.zh ? ev.zh : ev.text),
     // stage bgm/se 指令 → AudioBus;assetId→URL 查 pack.bgm 表(未知 id 告警不拦)
     onBgm: (assetId, fadeMs) => {
       if (assetId === null) {
@@ -307,9 +319,10 @@ async function assemble(): Promise<Assembled> {
     });
   }
 
-  // ---- 导演/编剧/摘要(同一条 LLM 连接) ----
+  // ---- 导演/编剧/摘要(同一条 LLM 连接)+ 字幕翻译(app 层非核心,共用连接) ----
+  const llm = new DeepseekClient({ apiKey: "", baseUrl: "/llm" }); // dev:key 由 Vite proxy 注入
   const story = createStoryService({
-    llm: new DeepseekClient({ apiKey: "", baseUrl: "/llm" }), // dev:key 由 Vite proxy 注入
+    llm,
     apiKey: "",
     baseUrl: "/llm",
     pack,
@@ -318,6 +331,32 @@ async function assemble(): Promise<Assembled> {
       warnings.push(m);
       console.warn("[story]", m);
     },
+  });
+
+  // 段收束 → 扫该拍未译的 say/narrate → 翻译 → attachTranslations 回写 ledger。
+  // 失败静默(回退日语原文);不等幕尾,choice 硬切/续写每段收束即译
+  const translate = createTranslator({
+    llm,
+    apiKey: "",
+    baseUrl: "/llm",
+    onError: (e) => console.warn("[translate]", e instanceof Error ? e.message : String(e)),
+  });
+  bus.on("segment:done", ({ turnNo }) => {
+    const items: { lineId: string; text: string }[] = [];
+    for (const e of engine.ledger) {
+      if (e.kind !== "ev" || e.turnNo !== turnNo) continue;
+      const ev = e.ev;
+      if ((ev.t === "say" || ev.t === "narrate") && !ev.zh && ev.text) {
+        items.push({ lineId: e.lineId, text: ev.text });
+      }
+    }
+    if (items.length === 0) return;
+    void translate(items)
+      .then((map) => {
+        if (map.size === 0) return;
+        engine.attachTranslations([...map].map(([lineId, zh]) => ({ lineId, zh })));
+      })
+      .catch(() => {}); // translate 内部已吞错;兜一层防 unhandled
   });
 
   let runner: BeatRunner | null = null;
@@ -402,6 +441,12 @@ async function assemble(): Promise<Assembled> {
     },
     stop() {
       runner?.stopGeneration();
+    },
+    newGame() {
+      runner?.newGame();
+    },
+    setUiLang(l: Lang) {
+      uiLang = l; // 闭包引用:下一行显示生效,不重打当前行
     },
   };
 }

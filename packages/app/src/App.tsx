@@ -128,6 +128,7 @@ export function App() {
 
   const changeLang = (l: Lang): void => {
     setLang(l);
+    asm?.setUiLang(l); // 上屏文本源同步切换(lang=zh 且已有译文 → 显示中文)
     saveSettings({ ...loadSettings(), lang: l }); // 面板内 update() 只在点字速/音量时写盘,语言单独落
   };
 
@@ -160,6 +161,35 @@ export function App() {
   }
   if (!asm || !snap) {
     return <div className="chrome loading">{tr.loading}</div>;
+  }
+
+  // ending 相位(终幕 sceneEnd 后,BeatRunner 退出循环):全屏收束画面。
+  // 女主名取当前好感最高的可立绘角色(= 线女主;engine 侧 ending 只在个人线终幕后发生)
+  if (snap.phase === "ending") {
+    let heroine = "";
+    let best = -Infinity;
+    for (const [id, v] of Object.entries(snap.world.affection)) {
+      if (v > best && asm.content.emotionsOf(id).size > 0) {
+        best = v;
+        heroine = asm.content.displayNameOf(id);
+      }
+    }
+    return (
+      <div className="ending">
+        <div className="shade" />
+        <div className="logo">
+          <div className="kicker">{heroine}</div>
+          <h1>{tr.endTitle}</h1>
+        </div>
+        <div className="menu">
+          <button type="button" className="mitem" onClick={() => asm.newGame()}>
+            {tr.endBack}
+          </button>
+        </div>
+        {panelNode}
+        {toastNode}
+      </div>
+    );
   }
 
   if (snap.phase === "title") {

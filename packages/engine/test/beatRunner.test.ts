@@ -9,6 +9,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import type { ActPlan, StoryChunk, Summary } from "@gal/shared";
+import { EMPTY_SUMMARY } from "@gal/shared";
 import { BeatRunner } from "../src/core/BeatRunner.ts";
 import { EngineCore } from "../src/core/EngineCore.ts";
 import { EventBus } from "../src/core/EventBus.ts";
@@ -219,5 +220,128 @@ describe("BeatRunner 幕循环", () => {
     expect(story.planCalls[1]!.direction).toBe("走向1"); // 旧走向喂回
     expect(runner.storyDirection).toBe("走向2");
     expect(runner.outlineBeatIndex).toBe(1); // 钳在 count
+  });
+});
+
+describe("BeatRunner 三段式阶段机(2026-10-18)", () => {
+  /** 带好感 delta 的 choice 条目:replay 进 ledger,foldWorld 折出种子好感(读档同路径) */
+  const seedChoice = (affection: Record<string, number>) =>
+    ({
+      kind: "choice",
+      lineId: "0.0",
+      turnNo: 0,
+      seq: 0,
+      optionId: "seed",
+      label: "種",
+      delta: { affection },
+    }) as const;
+
+  const SCENE: StoryChunk[] = [commit({ t: "narrate", text: "一" }), done("sceneEnd")];
+
+  it("好感达标 → 进线:最高好感**可立绘**角色(无立绘主角不参与);planAct 喂回 route", async () => {
+    const { engine, story, runner } = makeRunner([{ direction: "走向A" }, pad()], [SCENE]);
+    engine.replay([seedChoice({ yukitaka: 50, enagi: 20 })]); // 主角 50 分无立绘 → 不参与分线
+
+    const p = runner.run();
+    await vi.waitFor(() => expect(runner.actsDone).toBe(1));
+    runner.stopGeneration();
+    await p;
+
+    expect(runner.route).toBe("enagi");
+    expect(runner.routeSince).toBe(0);
+    expect(story.planCalls[0]!.route).toBe("enagi");
+    expect(story.planCalls[0]!.finale).toBeNull(); // 线内第 1 幕(diff=0<4)
+  });
+
+  it("好感不足门槛 → 共通线延续(route=null)", async () => {
+    const { engine, story, runner } = makeRunner([{ direction: "走向A" }, pad()], [SCENE]);
+    engine.replay([seedChoice({ enagi: 10 })]); // < 15
+
+    const p = runner.run();
+    await vi.waitFor(() => expect(runner.actsDone).toBe(1));
+    runner.stopGeneration();
+    await p;
+
+    expect(runner.route).toBeNull();
+    expect(story.planCalls[0]!.route).toBeNull();
+    expect(story.planCalls[1]!.route).toBeNull();
+  });
+
+  it("线内幕数达标(actsDone-routeSince≥4)→ 下一幕 planAct 带 finale{heroine}", async () => {
+    const { story, runner } = makeRunner([{ plan: ACT }, pad()], [SCENE]);
+    runner.restore({ summary: EMPTY_SUMMARY, outlineBeatIndex: 0, actsDone: 4, route: "enagi", routeSince: 0 });
+
+    const p = runner.run();
+    await vi.waitFor(() => expect(runner.actsDone).toBe(5));
+    runner.stopGeneration();
+    await p;
+
+    expect(story.planCalls[0]!.route).toBe("enagi");
+    expect(story.planCalls[0]!.finale).toEqual({ heroine: "enagi" });
+  });
+
+  it("终幕以 sceneEnd 收束 → phase=ending + 循环自退出(不再规划下一幕);beat:end 照发", async () => {
+    const { engine, bus, story, runner } = makeRunner([{ plan: ACT }], [SCENE]);
+    runner.restore({ summary: EMPTY_SUMMARY, outlineBeatIndex: 0, actsDone: 4, route: "enagi", routeSince: 0 });
+    const beatEnds: string[] = [];
+    bus.on("beat:end", (e) => beatEnds.push(e.result));
+
+    await runner.run(); // 无 choice/无垫幕:循环自己收束
+
+    expect(runner.running).toBe(false);
+    expect(engine.phase).toBe("ending");
+    expect(story.planCalls.length).toBe(1); // 不再有下一幕
+    expect(beatEnds).toEqual(["sceneEnd"]);
+  });
+
+  it("终幕中断(beatEnd 收束)→ 不进 ending;下一幕重试 finale,sceneEnd 才收束", async () => {
+    const { engine, bus, story, runner } = makeRunner([{ plan: ACT }, { plan: ACT }], [
+      [commit({ t: "narrate", text: "一" }), done("beatEnd")], // 幕设计异常兜底:非 sceneEnd
+      SCENE,
+    ]);
+    runner.restore({ summary: EMPTY_SUMMARY, outlineBeatIndex: 0, actsDone: 4, route: "enagi", routeSince: 0 });
+    const beatEnds: string[] = [];
+    bus.on("beat:end", (e) => beatEnds.push(e.result));
+
+    const p = runner.run();
+    await vi.waitFor(() => expect(runner.actsDone).toBe(6));
+    await p;
+
+    expect(story.planCalls.length).toBe(2);
+    expect(story.planCalls[1]!.finale).toEqual({ heroine: "enagi" }); // diff=5 仍达标 → 重试
+    expect(beatEnds).toEqual(["beatEnd", "sceneEnd"]);
+    expect(engine.phase).toBe("ending"); // 第二幕 sceneEnd 收束 → ending
+  });
+
+  it("segment:done:choice 硬切段与续写段各 emit 一次(同 turn)", async () => {
+    const planWithChoice: ActPlan = { ...ACT, beats: [{ goal: "選択まで", endsWith: "choice", maxLines: 6 }] };
+    const { bus, engine, runner } = makeRunner(
+      [{ plan: planWithChoice }, pad()],
+      [
+        [
+          commit({
+            t: "choice",
+            options: [
+              { id: "a", label: "あ" },
+              { id: "b", label: "い" },
+            ],
+            defaultOptionId: "a",
+          }),
+          done("choice"),
+        ],
+        [commit({ t: "narrate", text: "のち" }), done("sceneEnd")],
+      ],
+    );
+    const segs: number[] = [];
+    bus.on("segment:done", (e) => segs.push(e.turnNo));
+
+    const p = runner.run();
+    await vi.waitFor(() => expect(engine.pendingChoice).not.toBeNull());
+    engine.resolveChoice("a");
+    await vi.waitFor(() => expect(runner.actsDone).toBe(1));
+    runner.stopGeneration();
+    await p;
+
+    expect(segs).toEqual([1, 1]); // choice 段 + 续写段
   });
 });

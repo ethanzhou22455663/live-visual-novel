@@ -13,12 +13,16 @@ export const SayEventSchema = z.object({
   who: z.string().min(1),
   emotion: z.string(),
   text: z.string().min(1).refine(noRawNewline, "text 含裸换行"),
+  /** 中文译文(app 层字幕翻译回写;随档持久化。zod optional = 旧档/未译行兼容) */
+  zh: z.string().optional(),
 });
 
 export const NarrateEventSchema = z.object({
   t: z.literal("narrate"),
   turnNo: z.number().int().nonnegative(),
   text: z.string().min(1).refine(noRawNewline, "text 含裸换行"),
+  /** 中文译文(同 say.zh) */
+  zh: z.string().optional(),
 });
 
 const TransitionSchema = z.enum(["fade", "cut", "slide"]);

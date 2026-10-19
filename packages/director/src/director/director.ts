@@ -72,6 +72,8 @@ export class DirectorService {
         direction: req.direction,
         stage: req.stage,
         mustRefreshDirection: req.mustRefreshDirection,
+        route: req.route ?? null,
+        finale: req.finale ?? null,
         validationErrors,
       });
 

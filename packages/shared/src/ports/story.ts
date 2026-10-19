@@ -11,8 +11,8 @@ import type { WorldState } from "../state/world.ts";
 
 /** 历史渲染条目(ai-calls §0.4):导演与编剧共用 */
 export type HistoryItem =
-  | { t: "say"; who: string; emotion?: string; text: string }
-  | { t: "narrate"; text: string }
+  | { t: "say"; who: string; emotion?: string; text: string; zh?: string }
+  | { t: "narrate"; text: string; zh?: string }
   | { t: "choice"; label: string };
 
 /** 当前舞台状态(引擎侧真实呈现;导演换场/cast 连续性决策依据) */
@@ -39,6 +39,10 @@ export interface PlanActRequest {
   stage?: StageState;
   /** 系统判定的强制刷新走向(大纲走完/每 5 幕/上一幕有玩家选择) */
   mustRefreshDirection: boolean;
+  /** 当前个人线女主(null=共通线) */
+  route?: string | null;
+  /** 终幕标记(非 null = 本幕是终幕,heroine=个人线女主) */
+  finale?: { heroine: string } | null;
   signal?: AbortSignal;
 }
 
