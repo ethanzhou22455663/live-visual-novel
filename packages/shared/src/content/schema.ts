@@ -14,7 +14,7 @@ export const CharacterDefSchema = z.object({
   id: z.string().regex(/^[a-z0-9_-]+$/, "charId 仅限 [a-z0-9_-]"),
   displayName: z.string().min(1),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "color 须为 #rrggbb"),
-  defaultExpr: z.string().min(1),
+  defaultExpr: z.string(), // 可为空=无立绘角色(cli 对其输出 "";与 validate.ts「无立绘忽略 defaultExpr」对齐)
   sprites: z.record(z.string(), z.string()),
   voice: CharacterVoiceRefSchema.optional(),
   cardMd: z.string(),

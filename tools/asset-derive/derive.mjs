@@ -52,31 +52,57 @@ function blur3(a) {
   return o;
 }
 
-async function cutout(n, expr) {
-  const { data } = await sharp(SRC(String(n), `${expr}.jpg`)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+/** 通用抠图:绿幕/黑底立绘 JPG → 1920×1080 透明 PNG(school 批处理与 dawn 包素材共用)。
+ *  键色自动识别:四角样本均值——高饱和绿走绿幕阈值(近黑前景免疫),否则按黑底旧行为。
+ *  源尺寸不符时按 cover+bottom 裁齐(底对齐,保住脚贴下缘的构图)。 */
+async function cutoutFile(srcPath, outPath) {
+  let pipe = sharp(srcPath);
+  const meta = await pipe.metadata();
+  if (meta.width !== W || meta.height !== H) pipe = pipe.resize(W, H, { fit: "cover", position: "bottom" });
+  const { data } = await pipe.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
 
-  // ① 近黑像素为背景候选
+  // ① 背景键色:四角 8×8 均值。绿主导(g 远超 r/b)=绿幕;否则黑底(旧行为)
+  const patchAvg = (x0, y0) => {
+    let r = 0, g = 0, b = 0;
+    for (let y = y0; y < y0 + 8; y++) for (let x = x0; x < x0 + 8; x++) {
+      const j = (y * W + x) * 4;
+      r += data[j]; g += data[j + 1]; b += data[j + 2];
+    }
+    return [r / 64, g / 64, b / 64];
+  };
+  const c0 = patchAvg(0, 0), c1 = patchAvg(W - 8, 0), c2 = patchAvg(0, H - 8), c3 = patchAvg(W - 8, H - 8);
+  const kr = (c0[0] + c1[0] + c2[0] + c3[0]) / 4;
+  const kg = (c0[1] + c1[1] + c2[1] + c3[1]) / 4;
+  const kb = (c0[2] + c1[2] + c2[2] + c3[2]) / 4;
+  const chroma = kg - Math.max(kr, kb) > 60;
+  const tBg = chroma ? 85 : 30, tFold = chroma ? 130 : 45;
+  const distToKey = (j) =>
+    Math.max(Math.abs(data[j] - kr), Math.abs(data[j + 1] - kg), Math.abs(data[j + 2] - kb));
+
+  // ①' 距键色足够近的像素为背景候选
   const dark = new Uint8Array(N);
-  for (let i = 0; i < N; i++) {
-    const j = i * 4;
-    dark[i] = Math.max(data[j], data[j + 1], data[j + 2]) < 30 ? 1 : 0;
-  }
-  // ② 只有接触画面边缘的黑色连通域才算背景（角色身上的深色内部不相连 → 保留）
+  for (let i = 0; i < N; i++) dark[i] = distToKey(i * 4) < tBg ? 1 : 0;
+  // ② 键色区是否为背景:黑底模式只认连通到画面边缘的(角色深色内部不相连 → 保留);
+  //    绿幕模式封闭的纯绿=发丝间隙透出的镂空 → 一律抠穿
   const { labels: dl, sizes: dsz } = components(dark);
-  const border = new Set();
-  for (let x = 0; x < W; x++) { if (dark[x]) border.add(dl[x]); if (dark[(H - 1) * W + x]) border.add(dl[(H - 1) * W + x]); }
-  for (let y = 0; y < H; y++) { if (dark[y * W]) border.add(dl[y * W]); if (dark[y * W + W - 1]) border.add(dl[y * W + W - 1]); }
   const bg = new Uint8Array(N);
-  for (let i = 0; i < N; i++) bg[i] = dark[i] && border.has(dl[i]) ? 1 : 0;
+  if (chroma) {
+    for (let i = 0; i < N; i++) bg[i] = dark[i];
+  } else {
+    const border = new Set();
+    for (let x = 0; x < W; x++) { if (dark[x]) border.add(dl[x]); if (dark[(H - 1) * W + x]) border.add(dl[(H - 1) * W + x]); }
+    for (let y = 0; y < H; y++) { if (dark[y * W]) border.add(dl[y * W]); if (dark[y * W + W - 1]) border.add(dl[y * W + W - 1]); }
+    for (let i = 0; i < N; i++) bg[i] = dark[i] && border.has(dl[i]) ? 1 : 0;
+  }
 
-  // ③ 贴着背景的暗色边缘像素并入背景（JPEG 压缩产生的暗晕），两轮
+  // ③ 贴着背景的键色边缘像素并入背景(JPEG 压缩产生的暗晕/绿晕),两轮
   for (let pass = 0; pass < 2; pass++) {
     const fold = [];
     for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
       const i = y * W + x;
       if (bg[i]) continue;
       const j = i * 4;
-      if (Math.max(data[j], data[j + 1], data[j + 2]) >= 45) continue;
+      if (distToKey(j) >= tFold) continue;
       if (bg[i - 1] || bg[i + 1] || bg[i - W] || bg[i + W]) fold.push(i);
     }
     for (const i of fold) bg[i] = 1;
@@ -102,13 +128,23 @@ async function cutout(n, expr) {
     let r = data[j], g = data[j + 1], b = data[j + 2];
     if (a < 250) {
       const f = 255 / Math.max(a, 40);
-      r = Math.min(255, r * f); g = Math.min(255, g * f); b = Math.min(255, b * f);
+      r = Math.min(255, r * f);
+      b = Math.min(255, b * f);
+      // 绿底合成模型:观测色 = 前景×a + 绿×(1-a) → 先减键色贡献再除 alpha;溢色(绿超出红蓝)压制
+      g = chroma ? Math.max(0, Math.min(255, (g - (255 - a)) * f))
+                 : Math.min(255, g * f);
+      if (chroma) { const mb = Math.max(r, b); if (g > mb) g = mb; }
     }
     out[j] = r; out[j + 1] = g; out[j + 2] = b; out[j + 3] = a;
   }
   await sharp(out, { raw: { width: W, height: H, channels: 4 } })
-    .png({ compressionLevel: 6 }).toFile(OUT(String(n), `${expr}.png`));
-  console.log(`  ${n}/${expr}: 主体 ${maxSz}px, 去除碎片 ${dropped}px`);
+    .png({ compressionLevel: 6 }).toFile(outPath);
+  console.log(`  ${path.basename(srcPath)} → ${path.basename(outPath)}: 主体 ${maxSz}px, 去除碎片 ${dropped}px`);
+}
+
+/** school 主流程包装(保留原调用形式) */
+async function cutout(n, expr) {
+  await cutoutFile(SRC(String(n), `${expr}.jpg`), OUT(String(n), `${expr}.png`));
 }
 
 /** 场景图水印修补：镜像贴片覆盖 + 区域强模糊。 */
@@ -142,11 +178,22 @@ async function patchBg(name) {
   console.log(`  场景/${name}: 修补 3 处`);
 }
 
+// --cutout <src.jpg> <out.png>:单文件模式(dawn 等新包素材),不跑 school 批处理
+if (process.argv[2] === "--cutout") {
+  fs.mkdirSync(path.dirname(process.argv[4]), { recursive: true });
+  await cutoutFile(process.argv[3], process.argv[4]);
+  process.exit(0);
+}
+
 for (const d of ["1", "2", "3", "场景"]) fs.mkdirSync(OUT(d), { recursive: true });
 console.log("立绘抠图:");
 for (let n = 1; n <= 3; n++)
   for (const e of EXPRS)
     if (fs.existsSync(SRC(String(n), `${e}.jpg`))) await cutout(n, e);
-console.log("场景修补:");
-for (const s of SCENES) await patchBg(s);
+if (fs.existsSync(SRC("场景"))) {
+  console.log("场景修补:");
+  for (const s of SCENES) await patchBg(s);
+} else {
+  console.log("场景修补:跳过(无 assets/场景 源)");
+}
 console.log("完成 → mock/assets/");
