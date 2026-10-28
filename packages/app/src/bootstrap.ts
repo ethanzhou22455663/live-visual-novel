@@ -193,9 +193,10 @@ async function assemble(): Promise<Assembled> {
     textEl,
     choiceRoot: stageEl, // 选项浮层挂舞台内(engine DOM;z-index 6:窗上、面板下)
     cps: 28,
-    // 上屏文本源:lang=zh → 中文(有译文立即用;没有则等预取翻译≤6s,超时回退日文原文,
-    // 翻译永不阻塞剧情的 2026-10-18 裁决保持)。只影响打字内容——
-    // 语音/切句/日志仍用原始 ev.text(日语),配音节奏与字幕语言解耦。
+    // 上屏文本源:lang=zh → 中文(有译文立即用;没有则等预取翻译≤1.2s,超时先打日文原文,
+    // 译文回写后整句静默换中文——见 curLine 换写。翻译永不阻塞剧情的 2026-10-18 裁决保持,
+    // 等待上限从 6s 收到 1.2s:2026-10-28 用户裁决,久等=打字一卡一卡的体感来源)。
+    // 只影响打字内容——语音/切句/日志仍用原始 ev.text(日语),配音节奏与字幕语言解耦。
     // lineId 精确对应等待中的译文(zhWaiters,预取泵回写时唤醒)
     textOf: (ev, lineId) => {
       if (uiLang !== "zh") return ev.text;
@@ -213,9 +214,11 @@ async function assemble(): Promise<Assembled> {
         setTimeout(() => {
           set.delete(finish);
           finish(null);
-        }, 6000);
+        }, 1200);
       });
     },
+    // 译文显示开关(选项浮层渲染时实时读):日文模式下已带译文的选项也必须显示日文
+    zhOn: () => uiLang === "zh",
     // stage bgm/se 指令 → AudioBus;assetId→URL 查 pack.bgm 表(未知 id 告警不拦)
     onBgm: (assetId, fadeMs) => {
       if (assetId === null) {
@@ -277,8 +280,10 @@ async function assemble(): Promise<Assembled> {
   });
 
   // ---- 生成等待提示(2026-10-28 用户裁决:画面卡住时对话区要给文字提示) ----
-  // 显示泵排空而 runner 仍在生成 = 玩家此刻点击不会有任何反应:台词窗正文显示
-  // 「生成中」提示(压暗样式 .gen-wait),直到下一行上屏(打字覆盖)/选项弹出/生成结束。
+  // 两个空档来源:①显示队列排空而 runner 仍在生成(玩家此刻点击不会有任何反应)
+  // ②第一次生成——显示队列还没转过,display:drained 从未发过,开局总导演/写作的
+  // 等待也要给提示(displayedThrough 仍为 null = 还没有任何行上屏)。
+  // 提示显示到下一行上屏(打字覆盖)/选项弹出/生成结束为止。
   const genHintText = (): string => (uiLang === "zh" ? "……(生成中,请稍候)" : "……(生成中、しばらくお待ちください)");
   let hintOn = false;
   const hideGenHint = (): void => {
@@ -286,12 +291,17 @@ async function assemble(): Promise<Assembled> {
     hintOn = false;
     textEl.classList.remove("gen-wait");
   };
-  bus.on("display:drained", () => {
+  const showGenHint = (): void => {
     if (hintOn || engine.phase !== "play" || !runner?.running) return;
     hintOn = true;
     nextEl.classList.remove("on"); // ▼ 只在「可以继续」时亮
     textEl.textContent = genHintText();
     textEl.classList.add("gen-wait");
+  };
+  bus.on("display:drained", showGenHint);
+  bus.on("generation:status", ({ phase }) => {
+    // 开局(尚无已看行)的生成空档;中期 displayThrough 非空,空档由 display:drained 负责
+    if ((phase === "directing" || phase === "writing") && engine.displayedThrough === null) showGenHint();
   });
   bus.on("line:show", hideGenHint);
   bus.on("choice:offered", hideGenHint);
@@ -300,6 +310,17 @@ async function assemble(): Promise<Assembled> {
   });
   bus.on("generation:status", ({ phase }) => {
     if (phase === "idle" || phase === "error" || phase === "aborted") hideGenHint(); // 停止/失败=不再有下一行
+  });
+
+  // ---- 迟到译文整句换写(2026-10-28 用户裁决:等译文不能久等) ----
+  // textOf 超时先打日文后,译文才回来:若该行仍停在正文区且已打完,把整句换成中文——
+  // 不打断打字、不重打;行已翻页/被提示占据(textContent 对不上原文)则不动。
+  let curLine: { id: LineId; ja: string; done: boolean } | null = null;
+  bus.on("line:show", ({ lineId, ev }) => {
+    curLine = { id: lineId, ja: ev.text, done: false };
+  });
+  bus.on("typewriter:done", ({ lineId }) => {
+    if (curLine?.id === lineId) curLine.done = true;
   });
 
   // ---- 舞台点击推进(mock 同款守卫:按钮/面板/选项/toast 不透传) ----
@@ -422,6 +443,11 @@ async function assemble(): Promise<Assembled> {
               for (const res of set) res(zh);
               zhWaiters.delete(lineId);
             }
+            // 迟到译文换写:该行超时先打了日文、现已打完且仍停在正文区 → 整句换中文
+            if (curLine && curLine.done && curLine.id === lineId && textEl.textContent === curLine.ja) {
+              textEl.textContent = zh;
+              curLine.ja = zh; // 后续同 id 重复回写不会再换(对不上即跳过)
+            }
           }
         }
         if (choices.size > 0) engine.attachChoiceLabels([...choices].map(([lineId, v]) => ({ lineId, ...v })));
@@ -429,6 +455,7 @@ async function assemble(): Promise<Assembled> {
       .catch(() => {}); // translate 内部已吞错;兜一层防 unhandled
   };
   bus.on("line:commit", ({ event, lineId }) => {
+    if (uiLang !== "zh") return; // 日文模式:不做翻译(选项浮层由 zhOn 关兜底,2026-10-28)
     if (event.t === "say" || event.t === "narrate") {
       transQueue.set(lineId, event.text);
     } else if (event.t === "choice") {
@@ -528,6 +555,7 @@ async function assemble(): Promise<Assembled> {
     },
     setUiLang(l: Lang) {
       uiLang = l; // 闭包引用:下一行显示生效,不重打当前行
+      engine.refreshChoice(); // 开着的选项浮层按新语言重画(浮层渲染时实时读 zhOn)
     },
   };
 }

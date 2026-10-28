@@ -13,12 +13,16 @@ export interface ChoiceOverlayDeps {
   root: HTMLElement;
   /** 玩家点选(唯一入口:EngineCore.resolveChoice) */
   onPick(optionId: string): void;
+  /** 译文显示开关(app 注入 uiLang==="zh";缺省 = 有译文就显示)。
+   *  日文模式下不许呈现中文按钮/prompt(2026-10-28 用户反馈),渲染时实时读 */
+  zhOn?: () => boolean;
 }
 
 export class ChoiceOverlay {
   #bus: EventBus;
   #root: HTMLElement;
   #onPick: (optionId: string) => void;
+  #zhOn: () => boolean;
   #el: HTMLElement;
   #offs: Array<() => void> = [];
 
@@ -26,6 +30,7 @@ export class ChoiceOverlay {
     this.#bus = deps.bus;
     this.#root = deps.root;
     this.#onPick = deps.onPick;
+    this.#zhOn = deps.zhOn ?? (() => true);
 
     this.#el = document.createElement("div");
     this.#el.className = "gal-choice";
@@ -72,7 +77,8 @@ export class ChoiceOverlay {
 
   #show(choice: PublicChoiceOffer): void {
     this.#el.textContent = "";
-    const prompt = choice.promptZh ?? choice.prompt;
+    const zh = this.#zhOn(); // 渲染时实时读:语言切到日文,已带译文的组也要显示日文
+    const prompt = zh ? (choice.promptZh ?? choice.prompt) : choice.prompt;
     if (prompt) {
       const p = document.createElement("p");
       p.className = "gal-choice-prompt"; // 视觉归 app CSS(mock .choice 语言)
@@ -89,7 +95,7 @@ export class ChoiceOverlay {
       btn.dataset.optionId = opt.id;
       btn.style.cssText = ["position:relative", "padding:21px 20px 19px", "font-size:27px", "cursor:pointer"].join(";");
       btn.addEventListener("click", () => this.#onPick(opt.id));
-      btn.textContent = opt.zh ?? opt.label; // 有中文译文显示中文,否则日文原文
+      btn.textContent = zh ? (opt.zh ?? opt.label) : opt.label; // 译文开关决定呈现语言,否则日文原文
       list.append(btn);
     }
     this.#el.append(list);

@@ -88,6 +88,9 @@ export interface EngineCoreDeps {
    *  可返回 Promise:译文未就位时 app 等预取翻译(自带超时回退),泵在此挂起等文本。
    *  lineId 供 app 精确对应等待中的译文(2026-10-28 裁决:中文显示不许忽明忽暗) */
   textOf?: (ev: Extract<ScriptEvent, { t: "say" | "narrate" }>, lineId: LineId) => string | Promise<string>;
+  /** 译文显示开关(app 层注入:() => uiLang === "zh";缺省 = 有译文就显示)。
+   *  日文模式下选项浮层不许显示中文(2026-10-28 用户反馈):开关关时 zh 一律不呈现 */
+  zhOn?: () => boolean;
 }
 
 const AUTO_DWELL_MS = 800; // auto 模式行间停留(沿旧值)
@@ -119,6 +122,7 @@ export class EngineCore {
   #textOf:
     | ((ev: Extract<ScriptEvent, { t: "say" | "narrate" }>, lineId: LineId) => string | Promise<string>)
     | null;
+  #zhOn: (() => boolean) | null;
 
   // ---- 显示泵状态 ----
   #queue: DisplayEntry[] = [];
@@ -143,12 +147,14 @@ export class EngineCore {
     this.#onBgm = deps.onBgm ?? null;
     this.#onSe = deps.onSe ?? null;
     this.#textOf = deps.textOf ?? null;
+    this.#zhOn = deps.zhOn ?? null;
     this.#tw = new Typewriter(deps.textEl, { cps: deps.cps ?? 30 });
     if (deps.choiceRoot) {
       this.#choiceOverlay = new ChoiceOverlay({
         bus: this.bus,
         root: deps.choiceRoot,
         onPick: (id) => this.resolveChoice(id),
+        zhOn: () => this.#zhOn?.() ?? true,
       });
     }
     // 门等待中被切 fast/auto → 立即放行当前行(2026-10-17 裁决:skip 模式已移除,
@@ -407,6 +413,11 @@ export class EngineCore {
       changed = true;
     }
     if (changed) this.#notify();
+  }
+
+  /** 语言切换后重画开着的选项浮层(浮层渲染时实时读 zhOn,重发一次即可) */
+  refreshChoice(): void {
+    if (this.#pendingChoice) this.bus.emit("choice:labels", { choice: this.#pendingChoice });
   }
 
   /** choice 事件套上中文(promptZh/options[].zh;原文不动,不覆盖已有译文) */

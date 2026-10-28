@@ -39,7 +39,7 @@ const CHOICE: ModelScriptEvent = {
   defaultOptionId: "a",
 };
 
-function makeEngine() {
+function makeEngine(opts: { zhOn?: () => boolean } = {}) {
   const bus = new EventBus();
   const clock = new PresentationClock();
   const root = document.createElement("div");
@@ -51,6 +51,7 @@ function makeEngine() {
     content,
     textEl: document.createElement("p"),
     choiceRoot: root,
+    zhOn: opts.zhOn,
   });
   engine.setPhase("play"); // 泵只在 play 相位显示(生产里由 BeatRunner.run 设置)
   engine.beginTurn();
@@ -124,6 +125,51 @@ describe("ChoiceOverlay", () => {
     const savedEv = engine.toSaveData().ledger.find((e) => e.kind === "ev")?.ev as { promptZh?: string };
     expect(savedEv.promptZh).toBe("怎么办?");
     expect(() => engine.attachChoiceLabels([{ lineId: "9.9", labels: [] }])).not.toThrow(); // 未知行安全忽略
+  });
+
+  it("zhOn 译文开关(2026-10-28 用户反馈:日文模式不许出现中文):关=按钮/prompt 显示日文,缺省=有译文显示中文", () => {
+    const attach = (engine: ReturnType<typeof makeEngine>["engine"], lineId: string): void => {
+      engine.attachChoiceLabels([
+        { lineId, prompt: "怎么办?", labels: [{ optionId: "a", zh: "打招呼" }, { optionId: "b", zh: "注视" }] },
+      ]);
+    };
+    const btnText = (root: HTMLElement): (string | null)[] =>
+      [...root.querySelectorAll<HTMLButtonElement>("button[data-option-id]")].map((b) => b.textContent);
+
+    // 缺省(未注入 zhOn)= 有译文就显示(引擎自足用法不回归)
+    const a = makeEngine();
+    const withPrompt = { ...CHOICE, prompt: "どうする?" };
+    const aId = a.engine.commitModel(withPrompt).lineId;
+    attach(a.engine, aId);
+    expect(a.root.querySelector(".gal-choice-prompt")?.textContent).toBe("怎么办?");
+    expect(btnText(a.root)).toEqual(["打招呼", "注视"]);
+
+    // 日文模式:译文仍在(存档往返保留),但不呈现
+    const b = makeEngine({ zhOn: () => false });
+    const bId = b.engine.commitModel(withPrompt).lineId;
+    attach(b.engine, bId);
+    expect(b.engine.pendingChoice?.options[0]?.zh).toBe("打招呼"); // 数据在
+    expect(b.root.querySelector(".gal-choice-prompt")?.textContent).toBe("どうする?"); // 显示原文
+    expect(btnText(b.root)).toEqual(["声をかける", "見守る"]);
+  });
+
+  it("refreshChoice:语言切换后重发 choice:labels 让浮层重画;无停等选项不发", () => {
+    const { root, engine, bus } = makeEngine({ zhOn: () => false });
+    let n = 0;
+    bus.on("choice:labels", () => n++);
+    engine.refreshChoice();
+    expect(n).toBe(0); // 无停等选项:不发
+    const { lineId } = engine.commitModel(CHOICE);
+    expect(n).toBe(0); // offer 本身不带 labels 事件
+    engine.attachChoiceLabels([{ lineId, labels: [{ optionId: "a", zh: "打招呼" }, { optionId: "b", zh: "注视" }] }]);
+    expect(n).toBe(1); // 停等中回写原地换
+    expect(root.querySelector(".gal-choice-prompt")).toBeNull(); // CHOICE 无 prompt
+    engine.refreshChoice();
+    expect(n).toBe(2); // 重画一次(渲染时读 zhOn,日文模式下重画即显示日文)
+    expect([...root.querySelectorAll<HTMLButtonElement>("button[data-option-id]")].map((b) => b.textContent)).toEqual([
+      "声をかける",
+      "見守る",
+    ]);
   });
 
   it("读档重建队列:已持久化的译文不丢(重开的 offer 直接带中文)", async () => {

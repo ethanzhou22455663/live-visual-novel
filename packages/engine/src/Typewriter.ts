@@ -44,31 +44,31 @@ export class Typewriter {
     this.skipping = false;
     const chars = [...text];
     const cps = this.opts.cps ?? 30;
+    const interval = 1000 / cps;
     const pauseOf = (ch: string) => DEFAULT_PUNCT_PAUSE_MS[ch] ?? 0;
     return new Promise<void>((resolve) => {
       this.resolveDone = resolve;
-      const startAt = performance.now();
       let shown = 0;
-      let pauseAcc = 0; // 已消耗的标点停顿总量(从时间轴上扣除)
+      let acc = 0; // 时间预算(格数)
+      let last = performance.now();
       const step = () => {
         if (this.skipping) {
           this.el.textContent = text;
           this.#finish();
           return;
         }
-        const elapsed = performance.now() - startAt - pauseAcc;
-        let target = Math.floor((elapsed * cps) / 1000);
-        // 单帧补字上限(2026-10-28 用户裁决:打字要平滑不许一卡一卡):
-        // 主线程被生成流/React 渲染占住时 rAF 掉帧,按时间线补字会一帧蹦出好几字;
-        // 每帧最多走 maxStep 字、宁可整体放慢,视觉节奏恒定
-        const maxStep = Math.max(1, Math.round(cps / 60));
-        if (target > shown + maxStep) target = shown + maxStep;
-        if (target > shown) {
-          if (target > chars.length) target = chars.length;
-          this.el.textContent = chars.slice(0, target).join("");
-          for (let i = shown; i < target; i++) pauseAcc += pauseOf(chars[i] ?? "");
-          shown = target;
+        const now = performance.now();
+        // 严格节奏(2026-10-28 用户裁决:打字要平滑不许一卡一卡):预算按帧积累,
+        // 但欠账封顶一格——主线程被生成流/渲染占住掉帧后,至多立刻补一字、绝不连喷,
+        // 节奏恒定,总时长顺延(旧的时间线追字会在卡顿后一帧蹦出好几字)
+        acc = Math.min(acc + now - last, interval);
+        last = now;
+        const prev = shown;
+        while (acc >= interval && shown < chars.length) {
+          acc -= interval + pauseOf(chars[shown] ?? ""); // 标点停顿 = 下一字延后的负预算
+          shown++;
         }
+        if (shown !== prev) this.el.textContent = chars.slice(0, shown).join("");
         if (shown >= chars.length) {
           this.#finish();
           return;
