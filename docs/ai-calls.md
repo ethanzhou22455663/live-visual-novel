@@ -112,7 +112,7 @@ system 中放三张表(格式与 `context.ts renderPackTables` 一致):
 
 行类型(仅四种):`narrate` / `say`(who/emotion/text)/ `stage`(sprite: who+action enter|exit)/ `choice`。
 
-关键硬性规则:**bg・bgm 行禁止**(换景换曲由系统按幕设计自动落实);角色登场**必须在首句台词前发 sprite enter**;位置指定(slot/move)禁止(系统按在场人数自动布局);表情变化写 say 的 emotion;**写出 choice 行必须立即停止**(其后内容依赖玩家选择)。
+关键硬性规则:**bg・bgm 行禁止**(换景换曲由系统按幕设计自动落实);**第一人称主角视角**(2026-10-28):主角=角色表中「(no sprite)」者,他不是旁白员——几乎每个分段都要有他自己的 say 台词,`narrate` 只许写他的第一人称内心独白或一句场景提示,禁非人称小说式描写,连续 narrate ≤2 行、占比不超过全幕三分之一;角色登场**必须在首句台词前发 sprite enter**;位置指定(slot/move)禁止(系统按在场人数自动布局);表情变化写 say 的 emotion;**写出 choice 行必须立即停止**(其后内容依赖玩家选择)。
 
 ### 2.2 choice 硬切(2026-10-18 幕制核心机制)
 

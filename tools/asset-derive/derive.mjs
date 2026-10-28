@@ -178,10 +178,49 @@ async function patchBg(name) {
   console.log(`  场景/${name}: 修补 3 处`);
 }
 
-// --cutout <src.jpg> <out.png>:单文件模式(dawn 等新包素材),不跑 school 批处理
+/** 立绘归一化(2026-10-27 用户裁决:同一角色不同表情不得变大变小/位置漂移):
+ *  按 alpha 包围盒统一缩放+定位——人物高统一 92% 画布、水平居中。
+ *  锚点=底边:引擎满高底对齐渲染,半身像的腰部截断线必须严丝合缝落在画面底缘,
+ *  否则截断线悬空=人物漂浮(2026-10-27 实测教训:顶锚 5% 曾留 8% 底部空隙)。
+ *  发梢/手势的小差异保留(那是表情差分的一部分),头身大小与站位不再随生图漂移。 */
+async function normalizeSprite(pngPath) {
+  const { data, info } = await sharp(pngPath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const w = info.width, h = info.height;
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (data[(y * w + x) * 4 + 3] > 16) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  if (maxX < 0) throw new Error(`归一化失败:全透明 ${pngPath}`);
+  const bw = maxX - minX + 1, bh = maxY - minY + 1;
+  let scale = (H * 0.92) / bh;
+  if (bw * scale > W) scale = W / bw; // 保险:超宽时不越界
+  const tw = Math.max(1, Math.round(bw * scale));
+  const th = Math.max(1, Math.round(bh * scale));
+  const left = Math.round((W - tw) / 2);
+  const top = H - th; // 底边贴齐画面底缘(截断线不可见)
+  const body = await sharp(pngPath)
+    .extract({ left: minX, top: minY, width: bw, height: bh })
+    .resize(tw, th)
+    .png()
+    .toBuffer();
+  await sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite([{ input: body, left, top }])
+    .png({ compressionLevel: 6 })
+    .toFile(`${pngPath}.tmp.png`);
+  fs.renameSync(`${pngPath}.tmp.png`, pngPath);
+  console.log(`  归一化 ${path.basename(pngPath)}: 主体 ${bw}×${bh} → ${tw}×${th} @ (${left},${top})`);
+}
+
+// --cutout <src.jpg> <out.png> [--normalize]:单文件模式(dawn 等新包素材),不跑 school 批处理
 if (process.argv[2] === "--cutout") {
   fs.mkdirSync(path.dirname(process.argv[4]), { recursive: true });
   await cutoutFile(process.argv[3], process.argv[4]);
+  if (process.argv.includes("--normalize")) await normalizeSprite(process.argv[4]);
   process.exit(0);
 }
 

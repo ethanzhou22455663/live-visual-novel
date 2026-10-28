@@ -43,8 +43,8 @@
 (送她走,店随之消失)/ 自己接下班(留下来,成为下一个守店人)/ 两人一起等到那个能一起走出去的天亮。
 
 **外貌规格(生图用)**:
-- 中文:及腰黑长直发,额发上别一枚月白色月牙发卡,深蓝色旧式便利店店员制服配深蓝围裙,袖口卷起,身形娇小约155cm,年龄不详看似高中生,神情平静
-- English: long straight black hair waist-length, a single pale-moon hairpin on the left, deep navy vintage convenience-store staff uniform with navy apron, rolled-up sleeves, petite 155cm, ageless girl looking like a high schooler, calm composed face
+- 中文:及腰黑长直发姬发式平刘海,额发侧边别一枚月白色月牙发卡,左眼下一颗小泪痣,深紫色大眼睛,深蓝色旧式便利店店员制服配深蓝围裙,袖口卷起,身形娇小约155cm,年龄不详看似高中生,神情平静优雅
+- English: extremely long straight glossy black hair in a hime cut with blunt bangs, a tiny silver crescent-moon hair clip at the side of her bangs (small accessory, not a moon), a small tear mole under her left eye, large soft dark-violet eyes, deep navy vintage convenience-store staff uniform with navy apron, rolled-up sleeves, petite 155cm, ageless girl looking like a high schooler, calm composed elegant face
 
 ---
 
@@ -73,8 +73,8 @@
 拉着她当场分吃一份便当(打破交换,两人都不再被夜独占)/ 送她去她一直没去成的地方。
 
 **外貌规格(生图用)**:
-- 中文:浅棕色微卷长发,旧式圆顶学生帽配缎带,米白色连衣裙配奶油色针织开衫,约158cm,礼貌温柔,像从旧时代走来的少女
-- English: light brown loosely-waved long hair, vintage round school hat with ribbon, plain beige one-piece dress with cream knit cardigan, 158cm, polite gentle ladylike, a girl seemingly from another era
+- 中文:浅棕色微卷长发,一条细麻花辫从左侧垂在胸前、辫尾系奶白色缎带,旧式圆顶学生帽配缎带,蜜棕色圆大眼睛,米白色连衣裙配奶油色针织开衫,约158cm,礼貌温柔,像从旧时代走来的少女
+- English: light brown loosely-waved long hair with one thin side braid over her chest tied with a small cream ribbon, vintage round school hat with ribbon, large warm honey-brown eyes, plain beige one-piece dress with cream knit cardigan, 158cm, polite gentle ladylike, a girl seemingly from another era
 
 ---
 
@@ -103,8 +103,8 @@
 (从夜里平安毕业,与她告别)/ 求她别写(留在夜,守着店)/ 两人合写(把店写成谁都能回来的地方)。
 
 **外貌规格(生图用)**:
-- 中文:深紫色齐肩乱发,过大的深灰色连帽卫衣,眼下淡淡阴影,腋下夹着写满字的笔记本,约170cm高挑,慵懒的作家气质
-- English: messy dark-purple shoulder-length hair, oversized dark-grey hoodie, faint dark circles under tired sharp eyes, a handwriting-crammed notebook under her arm, tall 170cm, lazy novelist vibe
+- 中文:深紫色齐肩乱发,细银框圆形薄边眼镜,半睁的水晶紫倦眼,眼下淡淡阴影,过大的深灰色连帽卫衣帽子垂在背后绝不戴头上,腋下夹着写满字的笔记本,约170cm高挑,慵懒的作家气质
+- English: messy dark-purple shoulder-length hair, thin round silver-rimmed reading glasses, tired half-lidded amethyst eyes with faint dark circles, oversized dark-grey hoodie with the hood down resting on her back (never worn up), a handwriting-crammed notebook under her arm, tall 170cm, lazy novelist vibe
 
 ---
 

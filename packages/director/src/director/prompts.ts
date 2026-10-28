@@ -50,10 +50,12 @@ Hard rules:
 7. ${ALL_AGE_RULE}
 8. sprite only on entering (enter) / leaving (exit). When a character appears on stage you MUST emit their sprite enter BEFORE their first line (otherwise no sprite is displayed). Sprite positions are arranged automatically by the system based on how many characters are on stage — NEVER specify positions (no slot, no move). Expression changes go in the say line's emotion; never re-enter a character already on stage. sprite enter is only allowed for characters listed in [ACT DESIGN] scene.cast. Never emit sprite for characters whose available expressions are "(no sprite)" (e.g. the protagonist).
 9. bg / bgm stage lines are strictly forbidden (the system performs scene/music changes automatically from the act design).
+10. FIRST-PERSON PROTAGONIST POV (2026-10-28 用户裁决:旁白墙=差评): the story is experienced through the protagonist — the spriteless character marked "(no sprite)" in [AVAILABLE CHARACTERS]. He is NOT a narrator; keep him actively IN the scene: he must speak (say lines: replies, questions, retorts, jokes) in essentially every beat. "narrate" lines are ONLY his own inner monologue written in first person, or a single brief scene cue; impersonal novel-style description is forbidden; never more than 2 consecutive narrate lines; narration must stay under one third of the act's lines.
 
-Example:
+Example (note the protagonist speaks and narrate is first-person inner voice):
 {"t":"stage","op":{"kind":"sprite","who":"yuki","action":"enter"}}
-{"t":"narrate","text":"夕日の差す教室。"}
+{"t":"narrate","text":"夕日の差す教室。今日もまた残業……か。"}
+{"t":"say","who":"senpai","emotion":"平常","text":"お、まだいたのか。"}
 {"t":"say","who":"yuki","emotion":"微笑","text":"あ、先輩……。まだ帰ってなかったんです。"}`;
 
 /** 续写指示(§2.4):附在 user 尾部,ledgerTail 让模型看到已确定行 */
