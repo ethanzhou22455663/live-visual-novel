@@ -84,8 +84,10 @@ export interface EngineCoreDeps {
   /** BGM 指令出口(bootstrap 接 AudioBus;null=stop);不设 = 无声玩法(headless) */
   onBgm?: (assetId: string | null, fadeMs?: number) => void;
   onSe?: (assetId: string) => void;
-  /** 上屏文本源(app 层注入:UI 语言=中文且已有译文时显示 zh;缺省 = ev.text 日文原文) */
-  textOf?: (ev: Extract<ScriptEvent, { t: "say" | "narrate" }>) => string;
+  /** 上屏文本源(app 层注入:UI 语言=中文且已有译文时显示 zh;缺省 = ev.text 日文原文)。
+   *  可返回 Promise:译文未就位时 app 等预取翻译(自带超时回退),泵在此挂起等文本。
+   *  lineId 供 app 精确对应等待中的译文(2026-10-28 裁决:中文显示不许忽明忽暗) */
+  textOf?: (ev: Extract<ScriptEvent, { t: "say" | "narrate" }>, lineId: LineId) => string | Promise<string>;
 }
 
 const AUTO_DWELL_MS = 800; // auto 模式行间停留(沿旧值)
@@ -111,9 +113,12 @@ export class EngineCore {
   #tw: Typewriter;
   #currentLineId: LineId | null = null;
   #choiceOverlay: ChoiceOverlay | null = null;
+  #pendingChoiceLineId: LineId | null = null; // 停等中选项的 lineId(attachChoiceLabels 原地换中文用)
   #onBgm: ((assetId: string | null, fadeMs?: number) => void) | null;
   #onSe: ((assetId: string) => void) | null;
-  #textOf: ((ev: Extract<ScriptEvent, { t: "say" | "narrate" }>) => string) | null;
+  #textOf:
+    | ((ev: Extract<ScriptEvent, { t: "say" | "narrate" }>, lineId: LineId) => string | Promise<string>)
+    | null;
 
   // ---- 显示泵状态 ----
   #queue: DisplayEntry[] = [];
@@ -334,6 +339,7 @@ export class EngineCore {
     });
     this.#seq += 1;
     this.#pendingChoice = null;
+    this.#pendingChoiceLineId = null;
     this.setPhase("play");
     this.bus.emit("choice:resolved", { optionId: opt.id, label: opt.label });
     for (const w of [...this.#choiceWaiters]) w(); // 放行泵的选项停等
@@ -367,6 +373,66 @@ export class EngineCore {
       );
       this.#notify();
     }
+  }
+
+  /**
+   * 选项中文回写(app 翻译层,非核心;2026-10-28 用户裁决:选项不许只有日文):
+   * 更新 ledger choice 事件的 prompt/options[].zh、显示队列里的 offer;
+   * 若该组正停等玩家,#pendingChoice 原地更新并广播 choice:labels——浮层把按钮换成中文。
+   * 存档往返:zh 在 ledger ev 上,随 SaveData 持久化(schema 已收编)。
+   */
+  attachChoiceLabels(
+    entries: readonly { lineId: LineId; prompt?: string; labels: readonly { optionId: string; zh: string }[] }[],
+  ): void {
+    if (entries.length === 0) return;
+    const byLine = new Map(entries.map((e) => [e.lineId, e]));
+    let changed = false;
+    this.#ledger = this.#ledger.map((e) => {
+      if (e.kind !== "ev" || e.ev.t !== "choice") return e;
+      const upd = byLine.get(e.lineId);
+      if (!upd) return e;
+      changed = true;
+      return { ...e, ev: this.#choiceEvWithZh(e.ev, upd) };
+    });
+    this.#queue = this.#queue.map((q) => {
+      if (q.kind !== "choice") return q;
+      const upd = byLine.get(q.lineId);
+      if (!upd) return q;
+      changed = true;
+      return { ...q, offer: this.#offerWithZh(q.offer, upd) };
+    });
+    if (this.#pendingChoice && this.#pendingChoiceLineId && byLine.has(this.#pendingChoiceLineId)) {
+      this.#pendingChoice = this.#offerWithZh(this.#pendingChoice, byLine.get(this.#pendingChoiceLineId)!);
+      this.bus.emit("choice:labels", { choice: this.#pendingChoice });
+      changed = true;
+    }
+    if (changed) this.#notify();
+  }
+
+  /** choice 事件套上中文(promptZh/options[].zh;原文不动,不覆盖已有译文) */
+  #choiceEvWithZh(
+    ev: Extract<ScriptEvent, { t: "choice" }>,
+    upd: { prompt?: string; labels: readonly { optionId: string; zh: string }[] },
+  ): Extract<ScriptEvent, { t: "choice" }> {
+    const zhOf = new Map(upd.labels.map((l) => [l.optionId, l.zh]));
+    return {
+      ...ev,
+      promptZh: ev.prompt !== undefined ? (upd.prompt ?? ev.promptZh) : ev.promptZh,
+      options: ev.options.map((o) => (zhOf.has(o.id) && !o.zh ? { ...o, zh: zhOf.get(o.id) } : o)),
+    };
+  }
+
+  /** 公开 offer 套上中文(promptZh/options[].zh) */
+  #offerWithZh(
+    offer: PublicChoiceOffer,
+    upd: { prompt?: string; labels: readonly { optionId: string; zh: string }[] },
+  ): PublicChoiceOffer {
+    const zhOf = new Map(upd.labels.map((l) => [l.optionId, l.zh]));
+    return {
+      ...offer,
+      promptZh: upd.prompt ?? offer.promptZh,
+      options: offer.options.map((o) => (zhOf.has(o.id) && !o.zh ? { ...o, zh: zhOf.get(o.id) } : o)),
+    };
   }
 
   /**
@@ -477,8 +543,13 @@ export class EngineCore {
     this.bus.emit("line:show", { lineId: entry.lineId, ev });
     this.#notify();
     // ② 打字(fast 入队即瞬完;打字中点击 → 补完 + 连点计数)。
-    //    textOf 只换上屏文本:语音/日志/切句仍用原始 ev.text(日语),配音节奏不变
-    const typing = this.#tw.start(this.#textOf ? this.#textOf(ev) : ev.text);
+    //    textOf 只换上屏文本:语音/日志/切句仍用原始 ev.text(日语),配音节奏不变。
+    //    textOf 可异步(等译文):过 #cancellable 壳,epoch 取消时随之退出;
+    //    同步返回(含未注入)保持旧语义——commit 即开打,不引入微任务空窗
+    const src = this.#textOf ? this.#textOf(ev, entry.lineId) : ev.text;
+    const text = typeof src === "string" ? src : await this.#cancellable(epoch, src);
+    if (text === null) return false;
+    const typing = this.#tw.start(text);
     if (this.clock.mode === "fast") this.#tw.skip();
     if ((await this.#cancellable(epoch, typing)) === null) return false;
     this.bus.emit("typewriter:done", { lineId: entry.lineId });
@@ -502,6 +573,7 @@ export class EngineCore {
 
   async #showChoice(entry: Extract<DisplayEntry, { kind: "choice" }>, epoch: number): Promise<boolean> {
     this.#pendingChoice = entry.offer;
+    this.#pendingChoiceLineId = entry.lineId;
     this.setPhase("choicing");
     this.bus.emit("choice:offered", { choice: entry.offer });
     this.#notify();
@@ -567,6 +639,7 @@ export class EngineCore {
     this.#closeGate();
     this.#tw.cancel();
     this.#currentLineId = null;
+    this.#pendingChoiceLineId = null;
     this.#displayedThrough = null;
     for (const w of [...this.#cancelWaiters]) w();
     this.#cancelWaiters.clear();
@@ -718,9 +791,15 @@ export class EngineCore {
   #publicOfferOf(ev: Extract<ScriptEvent, { t: "choice" }>): PublicChoiceOffer {
     return {
       prompt: ev.prompt,
-      options: ev.options.map((o) =>
-        o.delta !== undefined ? { id: o.id, label: o.label, delta: o.delta } : { id: o.id, label: o.label },
-      ),
+      promptZh: ev.promptZh, // 读档重建队列也带上译文(ledger 已持久化的 zh 不丢)
+      options: ev.options.map((o) => {
+        const base: PublicChoiceOffer["options"][number] = { id: o.id, label: o.label };
+        return {
+          ...base,
+          ...(o.zh !== undefined ? { zh: o.zh } : {}),
+          ...(o.delta !== undefined ? { delta: o.delta } : {}),
+        };
+      }),
       defaultOptionId: ev.defaultOptionId,
     };
   }

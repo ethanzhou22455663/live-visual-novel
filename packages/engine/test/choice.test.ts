@@ -4,7 +4,7 @@
  * - hidden 后果隔离:不进 DOM、不进 snapshot;resolve 时与自身 delta 合一折叠(clamp)
  * - 选项永远停等玩家(2026-10-17 裁决 skip 已移除,不存在任何自动选)
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ContentPort, ModelScriptEvent } from "@gal/shared";
 import { EngineCore } from "../src/core/EngineCore.ts";
 import { EventBus } from "../src/core/EventBus.ts";
@@ -94,5 +94,65 @@ describe("ChoiceOverlay", () => {
     const pub = engine.snapshot().pendingChoice!;
     expect(JSON.stringify(pub)).not.toContain("hidden");
     expect(pub.options[0]).toEqual({ id: "a", label: "声をかける", delta: { affection: { enagi: 5 } } });
+  });
+
+  it("attachChoiceLabels(2026-10-28 裁决:选项不许只有日文):停等中的按钮/prompt 原地换中文;ledger 随档", () => {
+    const { root, engine, bus } = makeEngine();
+    const labelEvs: unknown[] = [];
+    bus.on("choice:labels", ({ choice }) => labelEvs.push(choice));
+    const withPrompt = { ...CHOICE, prompt: "どうする?" };
+    const { lineId } = engine.commitModel(withPrompt);
+    expect([...root.querySelectorAll<HTMLButtonElement>("button[data-option-id]")].map((b) => b.textContent)).toEqual([
+      "声をかける",
+      "見守る",
+    ]);
+
+    engine.attachChoiceLabels([
+      { lineId, prompt: "怎么办?", labels: [{ optionId: "a", zh: "打招呼" }, { optionId: "b", zh: "注视" }] },
+    ]);
+    // 浮层原地说中文(无需重新 offer):prompt 显示译文,原文 prompt 不被覆写
+    expect(root.querySelector(".gal-choice-prompt")?.textContent).toBe("怎么办?");
+    expect([...root.querySelectorAll<HTMLButtonElement>("button[data-option-id]")].map((b) => b.textContent)).toEqual([
+      "打招呼",
+      "注视",
+    ]);
+    expect(labelEvs).toHaveLength(1); // choice:labels 广播一次(浮层开着才消费)
+    expect(engine.pendingChoice).toMatchObject({ prompt: "どうする?", promptZh: "怎么办?" });
+    // ledger 原文+译文并存(写手历史不被中文污染),随档持久化
+    const ledgerEv = engine.ledger.find((e) => e.kind === "ev" && e.ev.t === "choice");
+    expect(ledgerEv).toMatchObject({ ev: { prompt: "どうする?", promptZh: "怎么办?" } });
+    const savedEv = engine.toSaveData().ledger.find((e) => e.kind === "ev")?.ev as { promptZh?: string };
+    expect(savedEv.promptZh).toBe("怎么办?");
+    expect(() => engine.attachChoiceLabels([{ lineId: "9.9", labels: [] }])).not.toThrow(); // 未知行安全忽略
+  });
+
+  it("读档重建队列:已持久化的译文不丢(重开的 offer 直接带中文)", async () => {
+    const a = makeEngine();
+    const withPrompt = { ...CHOICE, prompt: "どうする?" };
+    a.engine.commitModel({ t: "narrate", text: "前置行" });
+    const committed = a.engine.commitModel(withPrompt);
+    expect(committed.lineId).toBe("1.1");
+    a.engine.attachChoiceLabels([
+      {
+        lineId: committed.lineId,
+        prompt: "怎么办?",
+        labels: [{ optionId: "a", zh: "打招呼" }, { optionId: "b", zh: "注视" }],
+      },
+    ]);
+    await vi.waitFor(() => expect(a.engine.typewriter.typing).toBe(false)); // 1.0 打完,门停
+    a.engine.advance(); // 放行 1.0 → 存档 displayedThrough 落在 1.0(choice 保持未读)
+    await vi.waitFor(() => expect(a.engine.displayedThrough).toBe("1.0"));
+    const save = a.engine.toSaveData();
+
+    // 新引擎读档:choice 未读 → 队列重建 → 泵到达即 offer(直接中文,不需重新翻译)
+    const b = makeEngine();
+    b.engine.restoreFromSave(save);
+    await vi.waitFor(() => expect(b.engine.pendingChoice).not.toBeNull());
+    expect(b.engine.pendingChoice).toMatchObject({ prompt: "どうする?", promptZh: "怎么办?" });
+    expect(b.engine.pendingChoice?.options.map((o) => o.zh)).toEqual(["打招呼", "注视"]);
+    expect([...b.root.querySelectorAll<HTMLButtonElement>("button[data-option-id]")].map((btn) => btn.textContent)).toEqual([
+      "打招呼",
+      "注视",
+    ]);
   });
 });

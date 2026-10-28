@@ -118,6 +118,12 @@
   overflow: hidden;
 }
 
+/* 生成等待提示(bootstrap 写入正文元素):压暗区别于台词,下一行打字时整体覆盖 */
+.text.gen-wait {
+  opacity: 0.55;
+  letter-spacing: 0.12em;
+}
+
 .next {
   position: absolute;
   right: 56px;

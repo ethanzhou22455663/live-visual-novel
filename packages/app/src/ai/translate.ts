@@ -1,8 +1,10 @@
 /**
  * 字幕翻译(app 层,完全非核心;2026-10-18 裁决:translate 剥离出引擎,核心零侵入):
- * 段收束(segment:done)后把该拍未译的日文 say/narrate 译成简体中文,经
- * EngineCore.attachTranslations 回写 ledger。直用 LlmClient 端口(与剧情共用
- * DeepSeek 连接);失败/缺行静默放弃——翻译永远不阻塞剧情显示,无译文回退原文。
+ * 把未译的日文 say/narrate 及选项按钮/prompt 译成简体中文。触发=bootstrap 的
+ * line:commit 预取泵(2026-10-28:行提交即入队合批翻译,玩家读到时中文已就位;
+ * 原先挂 segment:done 段收束,中文会忽明忽暗)。经 EngineCore.attachTranslations /
+ * attachChoiceLabels 回写 ledger。直用 LlmClient 端口(与剧情共用 DeepSeek 连接);
+ * 失败/缺行静默放弃——翻译永远不阻塞剧情显示,无译文回退原文。
  */
 import type { LlmClient } from "@gal/director";
 

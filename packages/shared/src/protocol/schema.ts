@@ -62,6 +62,7 @@ export const WorldDeltaSchema = z.object({
 export const ChoiceOptionSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
+  zh: z.string().optional(), // 中文按钮译文(app 翻译回写;存档往返保留)
   delta: WorldDeltaSchema.optional(),
   hidden: z
     .object({
@@ -75,6 +76,7 @@ export const ChoiceOfferEventSchema = z.object({
   t: z.literal("choice"),
   turnNo: z.number().int().nonnegative(),
   prompt: z.string().optional(),
+  promptZh: z.string().optional(), // 提问语中文译文(app 翻译回写;存档往返保留)
   options: z.array(ChoiceOptionSchema).min(2).max(6),
   defaultOptionId: z.string().min(1),
 });

@@ -61,10 +61,12 @@ export interface GameEventMap {
   /** 显示队列排空(泵空闲):SaveSystem 在此兑现挂起存档;displayedThrough = 最后已看行 */
   "display:drained": { displayedThrough: LineId | null };
   "typewriter:done": { lineId: LineId };
-  /** 编剧一个生成段收束(整段/choice 硬切段/续写段):app 字幕翻译在此触发(非核心,2026-10-18) */
+  /** 编剧一个生成段收束(整段/choice 硬切段/续写段):段边界观察点(字幕翻译已改挂 line:commit 预取,2026-10-28) */
   "segment:done": { turnNo: number };
   /** 只携带公开视图;hidden 后果仅 resolveChoice 路径可见(plan §1.5) */
   "choice:offered": { choice: PublicChoiceOffer };
+  /** 选项中文译文回写(app 翻译层):浮层监听此事件把按钮原地说成中文 */
+  "choice:labels": { choice: PublicChoiceOffer };
   "choice:resolved": { optionId: string; label: string };
   "voice:state": {
     lineId: LineId;

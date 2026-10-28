@@ -346,7 +346,7 @@ export class BeatRunner {
       if (done?.result === "choice" && sawChoice) {
         if (choiceContinues >= 2) return "beatEnd"; // 保险:幕设计异常时按幕尾处理,剧情不断
         choiceContinues++;
-        bus.emit("segment:done", { turnNo }); // 本段(至 choice 硬切)收束 → app 字幕翻译触发点
+        bus.emit("segment:done", { turnNo }); // 本段(至 choice 硬切)收束(段边界观察点;翻译已改挂 line:commit 预取)
         bus.emit("generation:status", { phase: "choicing", turnNo });
         await engine.whenIdle(abort.signal);
         if (abort.signal.aborted) return "beatEnd";

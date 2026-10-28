@@ -20,7 +20,7 @@ import {
 } from "@gal/engine";
 import type { StageDeps, StagePort } from "@gal/engine";
 import { DeepseekClient, createStoryService, outlineBeatCount, parseContentPack } from "@gal/director";
-import type { ContentPack, ContentPort, EnqueueLineRequest, ReadyClip, SaveData, VoiceSynthPort } from "@gal/shared";
+import type { ContentPack, ContentPort, EnqueueLineRequest, LineId, ReadyClip, SaveData, VoiceSynthPort } from "@gal/shared";
 import { splitSentences } from "@gal/shared";
 import { GptSovitsProvider, SilentProvider, SynthQueue, TtsRouter } from "@gal/tts-bridge";
 import type { GptSovitsRefs } from "@gal/tts-bridge";
@@ -193,9 +193,29 @@ async function assemble(): Promise<Assembled> {
     textEl,
     choiceRoot: stageEl, // 选项浮层挂舞台内(engine DOM;z-index 6:窗上、面板下)
     cps: 28,
-    // 上屏文本源:lang=zh 且已有译文 → 中文;否则日文原文。只影响打字内容——
-    // 语音/切句/日志仍用原始 ev.text(日语),配音节奏与字幕语言解耦
-    textOf: (ev) => (uiLang === "zh" && ev.zh ? ev.zh : ev.text),
+    // 上屏文本源:lang=zh → 中文(有译文立即用;没有则等预取翻译≤6s,超时回退日文原文,
+    // 翻译永不阻塞剧情的 2026-10-18 裁决保持)。只影响打字内容——
+    // 语音/切句/日志仍用原始 ev.text(日语),配音节奏与字幕语言解耦。
+    // lineId 精确对应等待中的译文(zhWaiters,预取泵回写时唤醒)
+    textOf: (ev, lineId) => {
+      if (uiLang !== "zh") return ev.text;
+      if (ev.zh) return ev.zh;
+      return new Promise<string>((res) => {
+        let done = false;
+        const finish = (zh: string | null): void => {
+          if (done) return;
+          done = true;
+          res(zh ?? ev.text);
+        };
+        const set = zhWaiters.get(lineId) ?? new Set<(zh: string | null) => void>();
+        set.add(finish);
+        zhWaiters.set(lineId, set);
+        setTimeout(() => {
+          set.delete(finish);
+          finish(null);
+        }, 6000);
+      });
+    },
     // stage bgm/se 指令 → AudioBus;assetId→URL 查 pack.bgm 表(未知 id 告警不拦)
     onBgm: (assetId, fadeMs) => {
       if (assetId === null) {
@@ -254,6 +274,32 @@ async function assemble(): Promise<Assembled> {
       plateEl.classList.remove("on");
       nextEl.classList.remove("on");
     }
+  });
+
+  // ---- 生成等待提示(2026-10-28 用户裁决:画面卡住时对话区要给文字提示) ----
+  // 显示泵排空而 runner 仍在生成 = 玩家此刻点击不会有任何反应:台词窗正文显示
+  // 「生成中」提示(压暗样式 .gen-wait),直到下一行上屏(打字覆盖)/选项弹出/生成结束。
+  const genHintText = (): string => (uiLang === "zh" ? "……(生成中,请稍候)" : "……(生成中、しばらくお待ちください)");
+  let hintOn = false;
+  const hideGenHint = (): void => {
+    if (!hintOn) return;
+    hintOn = false;
+    textEl.classList.remove("gen-wait");
+  };
+  bus.on("display:drained", () => {
+    if (hintOn || engine.phase !== "play" || !runner?.running) return;
+    hintOn = true;
+    nextEl.classList.remove("on"); // ▼ 只在「可以继续」时亮
+    textEl.textContent = genHintText();
+    textEl.classList.add("gen-wait");
+  });
+  bus.on("line:show", hideGenHint);
+  bus.on("choice:offered", hideGenHint);
+  bus.on("engine:phase", ({ phase }) => {
+    if (phase !== "play") hideGenHint(); // 选项/结尾/回标题都不该留着提示
+  });
+  bus.on("generation:status", ({ phase }) => {
+    if (phase === "idle" || phase === "error" || phase === "aborted") hideGenHint(); // 停止/失败=不再有下一行
   });
 
   // ---- 舞台点击推进(mock 同款守卫:按钮/面板/选项/toast 不透传) ----
@@ -333,30 +379,65 @@ async function assemble(): Promise<Assembled> {
     },
   });
 
-  // 段收束 → 扫该拍未译的 say/narrate → 翻译 → attachTranslations 回写 ledger。
-  // 失败静默(回退日语原文);不等幕尾,choice 硬切/续写每段收束即译
+  // ---- 字幕翻译预取泵(app 层非核心;2026-10-28 裁决:中文不许忽明忽暗、选项也要中文) ----
+  // 行提交即入待译池(150ms 防抖合批),不等段收束——玩家读到该行时中文基本已就位
+  // (textOf 等它);选项按钮/prompt 同批翻译,attachChoiceLabels 回写。失败静默回退日文。
   const translate = createTranslator({
     llm,
     apiKey: "",
     baseUrl: "/llm",
     onError: (e) => console.warn("[translate]", e instanceof Error ? e.message : String(e)),
   });
-  bus.on("segment:done", ({ turnNo }) => {
-    const items: { lineId: string; text: string }[] = [];
-    for (const e of engine.ledger) {
-      if (e.kind !== "ev" || e.turnNo !== turnNo) continue;
-      const ev = e.ev;
-      if ((ev.t === "say" || ev.t === "narrate") && !ev.zh && ev.text) {
-        items.push({ lineId: e.lineId, text: ev.text });
-      }
-    }
-    if (items.length === 0) return;
+  const transQueue = new Map<string, string>(); // lineId 或伪 id(`${lineId}|opt:${id}`/`${lineId}|prompt`)→ 日文
+  const zhWaiters = new Map<LineId, Set<(zh: string | null) => void>>(); // textOf 等译文的行
+  let transTimer = 0;
+  const flushTranslate = (): void => {
+    transTimer = 0;
+    if (transQueue.size === 0) return;
+    const items = [...transQueue].map(([lineId, text]) => ({ lineId, text }));
+    transQueue.clear();
     void translate(items)
       .then((map) => {
         if (map.size === 0) return;
-        engine.attachTranslations([...map].map(([lineId, zh]) => ({ lineId, zh })));
+        const lines: { lineId: LineId; zh: string }[] = [];
+        const choices = new Map<LineId, { prompt?: string; labels: { optionId: string; zh: string }[] }>();
+        for (const [id, zh] of map) {
+          const bar = id.indexOf("|");
+          if (bar < 0) {
+            lines.push({ lineId: id as LineId, zh });
+            continue;
+          }
+          const lineId = id.slice(0, bar) as LineId;
+          const rest = id.slice(bar + 1); // "prompt" 或 "opt:<optionId>"
+          const entry = choices.get(lineId) ?? { labels: [] };
+          if (rest === "prompt") entry.prompt = zh;
+          else entry.labels.push({ optionId: rest.slice(4), zh });
+          choices.set(lineId, entry);
+        }
+        if (lines.length > 0) {
+          engine.attachTranslations(lines);
+          for (const { lineId, zh } of lines) {
+            const set = zhWaiters.get(lineId);
+            if (set) {
+              for (const res of set) res(zh);
+              zhWaiters.delete(lineId);
+            }
+          }
+        }
+        if (choices.size > 0) engine.attachChoiceLabels([...choices].map(([lineId, v]) => ({ lineId, ...v })));
       })
       .catch(() => {}); // translate 内部已吞错;兜一层防 unhandled
+  };
+  bus.on("line:commit", ({ event, lineId }) => {
+    if (event.t === "say" || event.t === "narrate") {
+      transQueue.set(lineId, event.text);
+    } else if (event.t === "choice") {
+      if (event.prompt) transQueue.set(`${lineId}|prompt`, event.prompt);
+      for (const o of event.options) transQueue.set(`${lineId}|opt:${o.id}`, o.label);
+    } else {
+      return;
+    }
+    if (!transTimer) transTimer = window.setTimeout(flushTranslate, 150);
   });
 
   let runner: BeatRunner | null = null;

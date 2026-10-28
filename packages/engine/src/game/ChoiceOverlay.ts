@@ -43,6 +43,10 @@ export class ChoiceOverlay {
 
     this.#offs.push(
       this.#bus.on("choice:offered", ({ choice }) => this.#show(choice)),
+      // 译文回写(2026-10-28 裁决:选项不许只有日文):开着就把按钮原地说成中文
+      this.#bus.on("choice:labels", ({ choice }) => {
+        if (this.isOpen) this.#show(choice);
+      }),
       this.#bus.on("choice:resolved", () => this.#hide()),
       this.#bus.on("engine:phase", ({ phase }) => {
         if (phase !== "choicing") this.#hide(); // replay/读档把相位带走时收起残留浮层
@@ -68,10 +72,11 @@ export class ChoiceOverlay {
 
   #show(choice: PublicChoiceOffer): void {
     this.#el.textContent = "";
-    if (choice.prompt) {
+    const prompt = choice.promptZh ?? choice.prompt;
+    if (prompt) {
       const p = document.createElement("p");
       p.className = "gal-choice-prompt"; // 视觉归 app CSS(mock .choice 语言)
-      p.textContent = choice.prompt;
+      p.textContent = prompt;
       this.#el.append(p);
     }
     const list = document.createElement("div");
@@ -84,7 +89,7 @@ export class ChoiceOverlay {
       btn.dataset.optionId = opt.id;
       btn.style.cssText = ["position:relative", "padding:21px 20px 19px", "font-size:27px", "cursor:pointer"].join(";");
       btn.addEventListener("click", () => this.#onPick(opt.id));
-      btn.textContent = opt.label;
+      btn.textContent = opt.zh ?? opt.label; // 有中文译文显示中文,否则日文原文
       list.append(btn);
     }
     this.#el.append(list);

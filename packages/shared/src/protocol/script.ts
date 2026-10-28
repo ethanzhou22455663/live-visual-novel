@@ -62,6 +62,8 @@ export interface ChoiceOption {
   readonly id: string;
   /** 按钮日文 */
   readonly label: string;
+  /** 按钮中文译文(app 字幕翻译回写,非核心;缺省 = 显示 label 原文) */
+  readonly zh?: string;
   readonly delta?: WorldDelta;
   readonly hidden?: HiddenConsequence;
 }
@@ -73,6 +75,8 @@ export interface ChoiceOfferEvent {
   readonly t: "choice";
   readonly turnNo: number;
   readonly prompt?: string;
+  /** 提问语中文译文(app 字幕翻译回写,非核心;缺省 = 显示 prompt 原文) */
+  readonly promptZh?: string;
   /** 3-4 个,全部由编剧产出 */
   readonly options: readonly ChoiceOption[];
   /** auto 模式/超时用 */
@@ -84,6 +88,8 @@ export type PublicChoiceOption = Omit<ChoiceOption, "hidden">;
 
 export interface PublicChoiceOffer {
   readonly prompt?: string;
+  /** 提问语中文译文(app 字幕翻译回写;缺省 = 显示 prompt 原文) */
+  readonly promptZh?: string;
   readonly options: readonly PublicChoiceOption[];
   readonly defaultOptionId: string;
 }

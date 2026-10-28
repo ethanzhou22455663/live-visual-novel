@@ -48,7 +48,7 @@ function fakeStage(): StagePort & { calls: StageCall[]; snaps: unknown[] } {
 }
 
 function makeEngine(
-  opts: { cps?: number; textOf?: (ev: Extract<ScriptEvent, { t: "say" | "narrate" }>) => string } = {},
+  opts: { cps?: number; textOf?: (ev: Extract<ScriptEvent, { t: "say" | "narrate" }>, lineId: string) => string | Promise<string> } = {},
 ) {
   const bus = new EventBus();
   const clock = new PresentationClock();
@@ -377,5 +377,33 @@ describe("字幕翻译(textOf/attachTranslations,2026-10-18)", () => {
     engine.advance(); // 放行 L2 → 泵排空
     await vi.waitFor(() => expect(engine.displayedThrough).toBe(l2));
     expect(shows).toEqual([l1, l2]);
+  });
+
+  it("textOf 可异步(2026-10-28 预取译文):等译文就位才开始打字;打断后迟到的译文不事故", async () => {
+    let resolveZh!: (s: string) => void;
+    const gate = new Promise<string>((r) => (resolveZh = r));
+    const { engine, shows, textEl } = makeEngine({ textOf: () => gate });
+    engine.setClockMode("fast");
+    engine.beginTurn();
+    const id = engine.commitModel({ t: "narrate", text: "日本語" }).lineId;
+    await tick();
+    expect(textEl.textContent).toBe(""); // 译文未到:一帧也不打(不闪现日文原文)
+    expect(shows).toEqual([id]); // 名牌/语音入口先行(等译文不挡 line:show)
+    resolveZh("中文");
+    await vi.waitFor(() => expect(engine.displayedThrough).toBe(id));
+    expect(textEl.textContent).toBe("中文");
+
+    // 打断路径:等待译文期间 replay(epoch 换代)→ 泵退出;迟到的译文不再上屏
+    let resolveLate!: (s: string) => void;
+    const late = new Promise<string>((r) => (resolveLate = r));
+    const e2 = makeEngine({ textOf: () => late, cps: 2000 });
+    e2.engine.setClockMode("fast");
+    e2.engine.beginTurn();
+    e2.engine.commitModel({ t: "narrate", text: "日本語" });
+    await tick();
+    e2.engine.replay([]);
+    resolveLate("中文");
+    await tick();
+    expect(e2.textEl.textContent).toBe("");
   });
 });

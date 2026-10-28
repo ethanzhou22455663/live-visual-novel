@@ -58,6 +58,11 @@ export class Typewriter {
         }
         const elapsed = performance.now() - startAt - pauseAcc;
         let target = Math.floor((elapsed * cps) / 1000);
+        // 单帧补字上限(2026-10-28 用户裁决:打字要平滑不许一卡一卡):
+        // 主线程被生成流/React 渲染占住时 rAF 掉帧,按时间线补字会一帧蹦出好几字;
+        // 每帧最多走 maxStep 字、宁可整体放慢,视觉节奏恒定
+        const maxStep = Math.max(1, Math.round(cps / 60));
+        if (target > shown + maxStep) target = shown + maxStep;
         if (target > shown) {
           if (target > chars.length) target = chars.length;
           this.el.textContent = chars.slice(0, target).join("");
