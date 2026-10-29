@@ -1,6 +1,6 @@
 # P0-① GPT-SoVITS 本机实测报告
 
-日期:2026-10-11。环境:RTX 4060 Laptop 8GB / i7-14650HX / 32GB RAM / Windows 11。
+日期:2026-10-11。环境:中端游戏笔记本(NVIDIA 8GB 显存 GPU / 现代 16 核 CPU / 32GB RAM / Windows 11)。
 服务:GPT-SoVITS-v2pro-20250604 整合包 `api_v2.py`,127.0.0.1:9880,`tts_infer.yaml` custom 段 `device: cuda, is_half: true`,内置 torch 2.0.0+cu118。
 方法:零依赖探测脚本 [tools/tts-probe/probe.mjs](../tools/tts-probe/probe.mjs)(参数全显式传入);参考音频为自录 wav(约 5s,不入库);测试句约 25 字日文,`text_split_method: cut0`(整句不切),`streaming_mode: 0`,输出 WAV 32kHz 单声道(约 5.4s 音频)。RTF = 合成耗时 / 音频时长。
 

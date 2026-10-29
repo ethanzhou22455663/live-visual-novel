@@ -16,6 +16,10 @@
     "turbo": "^2.11.7"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ethanzhou22455663/live-visual-novel.git"
+  },
   "engines": {
     "node": ">=20"
   }

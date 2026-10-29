@@ -1,10 +1,12 @@
-# AI Galgame
+# live-visual-novel
+
+[![CI](https://github.com/ethanzhou22455663/live-visual-novel/actions/workflows/ci.yml/badge.svg)](https://github.com/ethanzhou22455663/live-visual-novel/actions/workflows/ci.yml)
 
 AI 实时生成剧情、台词与配音的视觉小说引擎(Web/TypeScript monorepo)。
 
 总导演(LLM)按「幕」设计场景与走向 → 编剧(LLM)整幕流式写台词 → 引擎按玩家节奏逐句演出,GPT-SoVITS 逐句配音(主角与旁白静音)。剧情不是剧本库——每一局的走向、场景与对话都由模型即时编排,玩家的选择会真实改变后续剧情与结局叙述。
 
-> **本项目包含 AI 生成内容**:全部剧情文本与配音由 AI 实时生成,不代表任何真实人物与事件;界面与引擎代码由人工编写。
+> **本项目包含 AI 生成内容**:全部剧情文本与配音由 AI 实时生成,不代表任何真实人物与事件;美术素材(立绘/场景图)也可由 AI 生成,见 [CREDITS.md](CREDITS.md);界面与引擎代码由人工编写。
 
 ## 特性
 
@@ -13,7 +15,7 @@ AI 实时生成剧情、台词与配音的视觉小说引擎(Web/TypeScript mono
 - **显示泵**:生成与演出彻底解耦——LLM 再快也不乱闪,一句一句停,normal 点击 / Ctrl 快进 / ▶自动 三种节奏
 - **语音预取**:播当前句时后台合成下两句,翻页零等待;fast 快进自动静音
 - **存读档**:auto+手动 3 槽,幕写作中途存档、读档从断点续写;走向/幕进度随档恢复
-- **179 例测试** + 无头 e2e(tools/)
+- **195 例测试** + 无头 e2e(tools/)
 
 ## 架构
 
@@ -30,7 +32,7 @@ app(React 壳+装配根) ─→ engine(显示泵/状态机/存档) ─→ shared
 
 ## 快速开始
 
-前置:Node ≥ 20、pnpm(推荐 `corepack enable`,仓库锁定 pnpm 12)。
+前置:Node ≥ 20(CI 在 Node 22 运行)、pnpm(推荐 `corepack enable`,仓库锁定 pnpm 12)。
 
 ```bash
 pnpm install
@@ -60,7 +62,7 @@ pnpm dev
 ## 开发
 
 ```bash
-pnpm -s turbo run typecheck test   # 全仓类型检查 + 179 例测试
+pnpm -s turbo run typecheck test   # 全仓类型检查 + 195 例测试
 pnpm build                         # 产出 packages/app/dist(vite build)
 node tools/content-sync/cli.mjs --check   # 内容包校验(CI 同款门禁)
 npx dependency-cruiser validate packages  # 依赖方向规则(app→其余,其余只→shared)
@@ -85,11 +87,11 @@ npx dependency-cruiser validate packages  # 依赖方向规则(app→其余,其�
 
 ## 开源前终检(维护者清单)
 
-- [ ] 历史提交的占位身份 `dev <dev@local>` 已处理:
-      `git filter-repo --name-callback 'return name if name != "dev" else "你的名字"' --email-callback 'return email if email != "dev@local" else "你的邮箱"'`
-      (会重写全部历史,需强推;是否执行由维护者决定)
-- [ ] 各 `package.json` 的 `repository` 字段填真实仓库地址
-- [ ] `git ls-files` 复扫:无 assets/content-local/.env 等本地文件入库
+- [x] 历史提交的占位身份 `dev <dev@local>` 已处理(2026-10-29 按维护者裁决全部重写为
+      GitHub 账号 `ethanzhou22455663` 的 noreply 署名;本机无 Python,用 git 自带的
+      `filter-branch --env-filter` 而非 filter-repo,重写后已清理 `refs/original/` 与 reflog)
+- [x] 各 `package.json` 的 `repository` 字段填真实仓库地址
+- [x] `git ls-files` 复扫:无 assets/content-local/.env 等本地文件入库
 
 ## License
 

@@ -40,8 +40,8 @@ export interface Strings {
 
 export const STRINGS: Record<Lang, Strings> = {
   ja: {
-    title: "レモネード・ファクトリー",
-    subtitle: "AI 実時生成ノベル — P1",
+    title: "夜明け前、営業中",
+    subtitle: "AI が全部その場で生成するノベル",
     start: "スタート",
     resume: "つづきから",
     loading: "読み込み中…",
@@ -72,8 +72,8 @@ export const STRINGS: Record<Lang, Strings> = {
     endBack: "タイトルへ",
   },
   zh: {
-    title: "柠檬水工厂",
-    subtitle: "AI 实时生成视觉小说 — P1",
+    title: "黎明前打烊",
+    subtitle: "AI 实时生成视觉小说",
     start: "开始游戏",
     resume: "继续游戏",
     loading: "载入中…",

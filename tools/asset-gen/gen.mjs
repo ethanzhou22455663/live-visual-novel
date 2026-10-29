@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * 立绘/场景批量生图(火山方舟 · Seedream)——一次性批处理工具,不进运行时、不加 vite proxy。
+ * 仅本地测试用:原素材有版权,生成产物同样不得公开(信任模型见 CREDITS.md)。
  *
  * 前置:.env 提供 ARK_KEY;方舟控制台已开通「图像创作模型」。
  * 用法:
@@ -11,7 +12,7 @@
  * cutout() 抠成 1920×1080 透明 PNG,再按 docs/pack-switch.md 流程入包。
  * 请求参数名以方舟 images/generations 文档为准;不匹配时只改本文件顶部常量与 body 组装处。
  *
- * 2026-10-27 画风重定(用户裁决,参考 limelight/YuzuSoft 供体图):
+ * 2026-10-27 画风重定(参考本机自备的供体参考图,路径不入库):
  * - 立绘改半身胸像(常规 galgame 立绘形态),引擎满高渲染底对齐=人物顶天立地占满画面;
  * - 画风统一「干净明亮的日系大厂 galgame 风」,明令禁脏禁旧禁噪点;
  * - 场景保留昭和怀旧内容,但必须整洁精致,不许破败感。
@@ -25,7 +26,7 @@ const DEFAULT_MODEL = "doubao-seedream-5-0-flash-260915"; // 以控制台「图�
 const DEFAULT_SIZE = "1920x1080";
 const DEFAULT_OUT = "assets/_gen";
 
-/** 画风总纲(立绘):逐条对齐 limelight 供体图(YuzuSoft 2025)的可观测特征(2026-10-28 三修) */
+/** 画风总纲(立绘):逐条对齐本机自备供体参考图的可观测特征(2026-10-28 三修;供体不具名、路径不入库) */
 const STYLE_CHAR =
   "modern Japanese visual novel character sprite, official 2020s galgame art, " +
   "extremely clean delicate THIN lineart, soft round cute face, " +

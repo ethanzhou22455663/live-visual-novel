@@ -9,7 +9,7 @@
 | 目录 | 角色 | 入库? |
 |---|---|---|
 | `assets/limelight lemonade jam/` | 现有故事的**原始素材**(供体立绘 JPG/voice ref/BGM 原件)。school 包的 `assets-map.json` 按路径引用它 | 否(gitignored) |
-| `assets/school/` | 现有故事(LimeLight Lemonade Jam)的**完整包原档**(card/story/已派生资产/assets-map) | 否(gitignored) |
+| `assets/school/` | 供体作品的**完整包原档**(card/story/已派生资产/assets-map;供体具体作品不具名,素材自备、路径本地) | 否(gitignored) |
 | `assets/dawn/` | 新故事『黎明前打烊』的**完整包原档**(文本层已就绪,立绘/场景生成后补入) | 否(gitignored) |
 | `content-local/` | 运行时活动副本,被替换的对象 | 否(gitignored) |
 | `assets/_gen/` | gen.mjs 生图产物临时区,挑图后人工归入对应包 | 否(gitignored) |
