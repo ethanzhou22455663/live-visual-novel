@@ -2,6 +2,10 @@
 
 [![CI](https://github.com/ethanzhou22455663/live-visual-novel/actions/workflows/ci.yml/badge.svg)](https://github.com/ethanzhou22455663/live-visual-novel/actions/workflows/ci.yml)
 
+![运行画面:AI 实时生成的剧情、立绘与配音](docs/screenshot.jpg)
+
+> 画面:本地自备内容包『黎明前打烊』。立绘/场景为 AI 生成,台词与走向由 LLM 实时生成,配音由 GPT-SoVITS 实时合成。素材不入库,见 [CREDITS.md](CREDITS.md)。
+
 AI 实时生成剧情、台词与配音的视觉小说引擎(Web/TypeScript monorepo)。
 
 总导演(LLM)按「幕」设计场景与走向 → 编剧(LLM)整幕流式写台词 → 引擎按玩家节奏逐句演出,GPT-SoVITS 逐句配音(主角与旁白静音)。剧情不是剧本库——每一局的走向、场景与对话都由模型即时编排,玩家的选择会真实改变后续剧情与结局叙述。
@@ -117,7 +121,21 @@ defaultExpr: 平常
 
 ## 语音(GPT-SoVITS,可选)
 
-- 本机跑 GPT-SoVITS **api_v2** 服务,监听 `127.0.0.1:9880`(启动约需 1 分钟,属正常)
+本机部署一次 GPT-SoVITS,即可获得全程语音(零样本克隆,**无需任何训练/微调**):
+
+1. 下载 **GPT-SoVITS Windows 整合包**:[RVC-Boss/GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) 的 README/Releases 提供整合包下载,解压即用(自带 Python 运行时与 v2 预训练权重,无需配环境)
+2. (推荐)编辑 `GPT_SoVITS/configs/tts_infer.yaml` 的 `custom` 段:`device: cuda`、`is_half: true` —— 半精度推理,显存占用减半
+3. 在整合包根目录启动 api_v2 服务:
+
+   ```powershell
+   runtime\python.exe api_v2.py -a 127.0.0.1 -p 9880 -c GPT_SoVITS/configs/tts_infer.yaml
+   ```
+
+4. 首次加载权重约需 1 分钟(属正常),日志出现 `Running on http://127.0.0.1:9880` 即就绪
+5. 回到本引擎:内容包里配好参考音频(见下),进游戏即有语音
+
+其他要点:
+
 - 显卡调度建议(实测 RTF 0.59 的前提):NV 控制面板 preferred GPU 设独立显卡 + CUDA 帧率锁定 off + Windows 电源计划「高性能」——推理时别让 GPU 降频
 - dev 下浏览器经 Vite proxy 访问(`/tts` → 9880),无 CORS 问题;参考音频路径只进 POST body,不出现在 URL
 - 语音配在本包 `assets-map.json` 的 `voice` 块,多角色可共用同一份 ref,也能按角色覆盖:
