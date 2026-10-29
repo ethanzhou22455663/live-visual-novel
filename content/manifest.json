@@ -7,7 +7,7 @@
       "color": "#9aa7b0",
       "defaultExpr": "平常",
       "sprites": {},
-      "cardMd": "\n# サンプル(占位キャラクター)\n\n替换本目录为你的角色:`content/characters/<charId>/`,charId 仅限 `[a-z0-9_-]`。\n\n- frontmatter:name(表示名)/ color(个人色 #rrggbb)/ defaultExpr(默认表情,须是 sprites 文件名之一)\n- 正文:角色性格设定原文,会整段注入导演/编剧 prompt\n- 立绘:往本目录丢图片即成表情(文件名=表情名,如 `平常.png`/`微笑.png`)\n- 语音(可选):`voice/ref.wav` + `voice/voice.json`\n\n本仓库的 OSS 占位包不含任何第三方 IP 素材;本地测试包放 `content-local/`(gitignored)。\n"
+      "cardMd": "\n# サンプル(占位キャラクター)\n\n替换本目录为你的角色:`content/characters/<charId>/`,charId 仅限 `[a-z0-9_-]`。\n\n- frontmatter:name(表示名)/ color(个人色 #rrggbb)/ defaultExpr(默认表情,须是 sprites 文件名之一)\n- 正文:角色性格设定原文,会整段注入导演/编剧 prompt\n- 立绘:往本目录丢图片即成表情(文件名=表情名,如 `平常.png`/`微笑.png`)\n- 语音(可选):在本包 `assets-map.json` 的 `voice` 块配置(ref 音频 + 转写;见 docs/pack-switch.md)\n\n本仓库的 OSS 占位包不含任何第三方 IP 素材;本地测试包放 `content-local/`(gitignored)。\n"
     }
   },
   "scenes": {},
